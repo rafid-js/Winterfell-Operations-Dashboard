@@ -130,6 +130,74 @@ app.post('/api/bkash/record', async (req, res) => {
   }
 });
 
+
+// ── API: SKU lookup ──────────────────────────────────────────
+app.get('/api/sku/:sku', async (req, res) => {
+  try {
+    const data = await zohoGet(`/items?search_text=${encodeURIComponent(req.params.sku)}`);
+    const items = data.items || [];
+    const match = items.find(i => i.sku === req.params.sku) || items[0];
+    if (!match) return res.status(404).json({ error: 'SKU not found' });
+    res.json({ name: match.name, price: match.rate, itemId: match.item_id, sku: match.sku });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── API: Create Invoice ──────────────────────────────────────
+app.post('/api/invoice/create', async (req, res) => {
+  try {
+    const { orderId, customerName, date, shipping, paymentMethod, items } = req.body;
+
+    // Find or create customer
+    let customerId;
+    const custSearch = await zohoGet(`/contacts?contact_name=${encodeURIComponent(customerName)}&contact_type=customer`);
+    if (custSearch.contacts?.length) {
+      customerId = custSearch.contacts[0].contact_id;
+    } else {
+      const newCust = await zohoPost('/contacts', {
+        contact_name: customerName,
+        contact_type: 'customer',
+        payment_terms: 0,
+        billing_address: { country: 'BD' }
+      });
+      if (newCust.code !== 0) throw new Error('Could not create customer: ' + newCust.message);
+      customerId = newCust.contact.contact_id;
+    }
+
+    // Look up each SKU to get item_id
+    const lineItems = [];
+    for (const item of items) {
+      const skuData = await zohoGet(`/items?search_text=${encodeURIComponent(item.sku)}`);
+      const match = (skuData.items || []).find(i => i.sku === item.sku) || skuData.items?.[0];
+      if (match) {
+        lineItems.push({ item_id: match.item_id, name: match.name, quantity: 1, rate: item.price || match.rate });
+      } else {
+        // Create as description-only line item
+        lineItems.push({ name: item.name || item.sku, description: `SKU: ${item.sku}`, quantity: 1, rate: item.price });
+      }
+    }
+
+    const invoiceBody = {
+      customer_id: customerId,
+      invoice_number: orderId,
+      date,
+      due_date: date,
+      line_items: lineItems,
+      shipping_charge: shipping || 0,
+      custom_payment_terms: paymentMethod === 'cod' ? 'Cash on Delivery' : paymentMethod,
+      notes: 'Created via Winterfell Operations Dashboard'
+    };
+
+    const invResp = await zohoPost('/invoices', invoiceBody);
+    if (invResp.code !== 0) throw new Error(invResp.message);
+
+    const inv = invResp.invoice;
+    // Mark as sent
+    await zohoPost(`/invoices/${inv.invoice_id}/status/sent`, {});
+
+    res.json({ success: true, invoiceId: inv.invoice_id, invoiceNumber: inv.invoice_number, total: inv.total });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── API: Look up invoice ─────────────────────────────────────
 app.get('/api/invoice/:orderId', async (req, res) => {
   try {
