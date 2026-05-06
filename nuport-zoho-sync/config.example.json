@@ -1,0 +1,11 @@
+{
+  "nuport_api_key": "YOUR_NUPORT_API_KEY_HERE",
+  "nuport_base_url": "https://api.nuport.io",
+  "zoho_org_id": "YOUR_ZOHO_ORGANIZATION_ID",
+  "zoho_client_id": "YOUR_ZOHO_CLIENT_ID",
+  "zoho_client_secret": "YOUR_ZOHO_CLIENT_SECRET",
+  "zoho_refresh_token": "YOUR_ZOHO_REFRESH_TOKEN",
+  "zoho_region": "com",
+  "sync_interval_hours": 6,
+  "log_dir": "logs/"
+}
