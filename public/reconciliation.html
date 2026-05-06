@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pathao → Zoho Books Reconciliation · Winterfell</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --border: #1e2d45;
+    --accent: #00d4aa;
+    --accent2: #0ea5e9;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --green: #10b981;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    min-height: 100vh;
+    padding: 32px 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 32px;
+  }
+
+  .logo {
+    width: 44px; height: 44px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  .subtitle { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 18px;
+  }
+
+  .card-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--accent);
+    margin-bottom: 18px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  /* Drop Zone */
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 48px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--surface2);
+  }
+
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(0, 212, 170, 0.06);
+  }
+
+  .drop-icon { font-size: 36px; margin-bottom: 12px; }
+  .drop-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
+  .drop-text strong { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+  .file-loaded {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    background: rgba(0,212,170,0.08);
+    border: 1px solid rgba(0,212,170,0.3);
+    border-radius: 10px;
+    font-size: 13px;
+    margin-top: 14px;
+  }
+
+  /* Settings */
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 7px; }
+
+  label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  input, select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 11px 13px;
+    font-size: 13px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+
+  input:focus, select:focus { border-color: var(--accent); }
+  select option { background: var(--surface); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 13px 24px;
+    border-radius: 9px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #0a0e1a;
+    width: 100%;
+    font-size: 15px;
+    padding: 15px;
+  }
+
+  .btn-primary:hover { background: #00f5c4; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,212,170,0.3); }
+  .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    flex: 1;
+    font-size: 13px;
+    padding: 12px;
+  }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+  .btn-green {
+    background: var(--green);
+    color: #fff;
+    flex: 2;
+    font-size: 13px;
+    padding: 12px;
+  }
+  .btn-green:hover { background: #0da372; transform: translateY(-1px); }
+
+  /* Stats */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .stat {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-val {
+    font-size: 22px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .stat-val.green { color: var(--green); }
+  .stat-val.warn { color: var(--warn); }
+  .stat-val.accent { color: var(--accent); }
+  .stat-val.danger { color: var(--danger); }
+
+  .stat-label {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  /* Table */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead { background: var(--surface2); }
+
+  th {
+    padding: 11px 13px;
+    text-align: left;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 11px 13px;
+    border-bottom: 1px solid rgba(30,45,69,0.5);
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(0,212,170,0.03); }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .badge-delivery { background: rgba(16,185,129,0.15); color: var(--green); }
+  .badge-return   { background: rgba(245,158,11,0.15);  color: var(--warn); }
+  .badge-partial  { background: rgba(239,68,68,0.15);   color: var(--danger); }
+  .badge-fee      { background: rgba(100,116,139,0.15); color: var(--muted); }
+
+  .amount-pos { color: var(--green); }
+  .amount-neg { color: var(--danger); }
+  .amount-warn { color: var(--warn); }
+  .amount-muted { color: var(--muted); }
+
+  .section-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .toggle-row { display: flex; gap: 6px; }
+
+  .toggle-btn {
+    padding: 5px 13px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    transition: all 0.15s;
+  }
+
+  .toggle-btn.active {
+    background: var(--surface2);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+
+  .download-row { display: flex; gap: 10px; margin-top: 16px; }
+
+  .info-box {
+    background: rgba(0, 212, 170, 0.05);
+    border: 1px solid rgba(0, 212, 170, 0.2);
+    border-radius: 10px;
+    padding: 16px 18px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 2;
+    margin-top: 18px;
+  }
+
+  .info-box strong { color: var(--accent); }
+  .info-box code {
+    background: var(--surface2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--text);
+    font-size: 11px;
+  }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">⚡</div>
+  <div>
+    <h1>Pathao → Zoho Books Reconciliation</h1>
+    <div class="subtitle">Settlement Payment Importer · Winterfell</div>
+  </div>
+</div>
+
+<!-- Step 1: Upload -->
+<div class="card">
+  <div class="card-title">01 — Upload Pathao Settlement CSVs (1 or more)</div>
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-icon">📂</div>
+    <div class="drop-text">
+      Drop multiple Pathao settlement CSVs here<br>
+      or <strong onclick="document.getElementById('fileInput').click()">click to browse files</strong><br>
+      <span style="font-size:12px;margin-top:6px;display:inline-block;">Select or drop any number of files at once — duplicates removed automatically</span>
+    </div>
+  </div>
+  <input type="file" id="fileInput" accept=".csv" multiple style="display:none">
+  <div id="fileList" style="margin-top:12px;display:flex;flex-direction:column;gap:6px;"></div>
+</div>
+
+<!-- Step 2: Settings -->
+<div class="card">
+  <div class="card-title">02 — Settlement Settings</div>
+  <div class="settings-grid">
+    <div class="field">
+      <label>Settlement / Payout Date</label>
+      <input type="date" id="settleDate">
+    </div>
+    <div class="field">
+      <label>Deposit To (Bank Account in Zoho)</label>
+      <select id="depositTo">
+        <option value="City Bank">City Bank</option>
+        <option value="Eastern Bank">Eastern Bank</option>
+        <option value="Prime Bank">Prime Bank</option>
+        <option value="Bkash">Bkash</option>
+        <option value="Nagad">Nagad</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Payment Mode</label>
+      <select id="paymentMode">
+        <option value="Bank Transfer">Bank Transfer</option>
+        <option value="Cash">Cash</option>
+        <option value="Others">Others</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Settlement Reference # (optional)</label>
+      <input type="text" id="settleRef" placeholder="e.g. PATHAO-MAY05-001">
+    </div>
+  </div>
+</div>
+
+<!-- Step 3: Process -->
+<div class="card">
+  <div class="card-title">03 — Process & Generate</div>
+  <button class="btn btn-primary" id="processBtn" disabled onclick="processFile()">
+    ⚡ Process Settlement & Generate Zoho CSV
+  </button>
+</div>
+
+<!-- Results -->
+<div id="results" class="hidden">
+  <div class="card">
+    <div class="card-title">Settlement Summary</div>
+    <div class="stats-grid">
+      <div class="stat">
+        <div class="stat-val green" id="statDeliveries">0</div>
+        <div class="stat-label">Paid Deliveries</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val accent" id="statCollected">৳0</div>
+        <div class="stat-label">Total Collected</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val warn" id="statFees">৳0</div>
+        <div class="stat-label">Pathao Fees</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val green" id="statPayout">৳0</div>
+        <div class="stat-label">Gross Payout</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val danger" id="statLoss">৳0</div>
+        <div class="stat-label">Failed Delivery Loss</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val warn" id="statPartial">0</div>
+        <div class="stat-label">Partial Orders</div>
+      </div>
+      <div class="stat" style="border-color:rgba(0,212,170,0.4)">
+        <div class="stat-val accent" id="statNet">৳0</div>
+        <div class="stat-label">Net Settlement (Bank)</div>
+      </div>
+    </div>
+
+    <div class="section-actions">
+      <div class="card-title" style="margin-bottom:0;">Line Items</div>
+      <div class="toggle-row">
+        <button class="toggle-btn active" onclick="filterRows('all',this)">All</button>
+        <button class="toggle-btn" onclick="filterRows('delivery',this)">✅ Payments</button>
+        <button class="toggle-btn" onclick="filterRows('partial',this)">⚠️ Partial</button>
+        <button class="toggle-btn" onclick="filterRows('recovery',this)">💰 Return Income</button>
+        <button class="toggle-btn" onclick="filterRows('failed',this)">❌ Failed</button>
+        <button class="toggle-btn" onclick="filterRows('partial',this)">⚠️ Partial</button>
+        <button class="toggle-btn" onclick="filterRows('skip',this)">⚠️ Skipped</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Consignment</th>
+            <th>Recipient</th>
+            <th>Type</th>
+            <th>Collected</th>
+            <th>Pathao Fee</th>
+            <th>Net Payout</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="download-row">
+      <button class="btn btn-green" onclick="downloadPaymentsCSV()">
+        ⬇️ Download Zoho Payments CSV
+      </button>
+      <button class="btn btn-outline" onclick="downloadPartialCSV()">
+        ⚠️ Partial Orders CSV
+      </button>
+      <button class="btn btn-outline" onclick="downloadFailedCSV()">
+        ❌ Failed Deliveries CSV
+      </button>
+      <button class="btn btn-outline" onclick="downloadRecoveryCSV()">
+        💰 Return Income CSV
+      </button>
+      <button class="btn btn-outline" onclick="downloadPartialCSV()">
+        ⚠️ Partial Orders CSV
+      </button>
+      <button class="btn btn-outline" onclick="downloadSkippedCSV()">
+        ⬇️ Skipped / Returns
+      </button>
+    </div>
+
+    <div class="info-box">
+      <strong>How to import into Zoho Books (3 steps):</strong><br>
+      1. Go to <strong>Zoho Books → Invoices</strong><br>
+      2. Click <strong>⋮ More → Import Payments</strong> → upload <code>zoho_payments_import.csv</code><br>
+      3. Map fields: <code>Invoice Number</code> → Invoice Number · <code>Amount Received</code> → Amount · <code>Bank Charges</code> → Bank Charges · <code>Payment Date</code> → Payment Date<br><br>
+      <strong>What Bank Charges means:</strong> This is Pathao's fee (COD % + delivery charge). Zoho records it as an expense and closes the invoice as fully paid. ✅<br><br>
+      <strong>⚠️ Partial Orders:</strong> Customer received some items, returned others. Run each through the <strong>Partial Order Fixer</strong> tool to check Nuport, then paste instructions to Claude to fix the invoice and record payment.<br><br>
+      <strong>⚠️ Partial Orders:</strong> Some items delivered, some returned. Run each through the <strong>Partial Order Fixer</strong> to check Nuport, then paste instructions to Claude to fix the invoice and record the correct payment.<br><br>
+      <strong>💰 Return Income orders:</strong> Product returned, customer paid delivery charge, you profited at least ৳1. Record in <strong>Zoho Books → Banking → City Bank → Money In → Other Income</strong> with the net profit amount.<br><br>
+      <strong>❌ Failed Delivery orders:</strong> Customer refused / returned without paying. Pathao deducted this from your settlement. Record in <strong>Zoho Books → Banking → City Bank → Money Out → Expense → Delivery Expense</strong> with the loss amount.<br><br>
+      <strong>Net Settlement (Bank)</strong> = the exact amount Pathao deposited to your City Bank account.
+    </div>
+  </div>
+</div>
+
+<script>
+  let parsedRows = [];
+  let processedData = [];
+  let loadedFiles = [];
+
+  // Set today's date
+  document.getElementById('settleDate').value = new Date().toISOString().split('T')[0];
+
+  // File input via button — multiple files
+  const fileInput = document.getElementById('fileInput');
+  fileInput.addEventListener('change', e => { if (e.target.files.length) addFiles(Array.from(e.target.files)); });
+
+  // Drag and drop — multiple files
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv'));
+    if (files.length) addFiles(files);
+  });
+
+  function addFiles(files) {
+    // Deduplicate by filename
+    files.forEach(file => {
+      if (!loadedFiles.find(f => f.name === file.name)) {
+        loadedFiles.push(file);
+      }
+    });
+    renderFileList();
+    loadAllFiles();
+  }
+
+  function removeFile(name) {
+    loadedFiles = loadedFiles.filter(f => f.name !== name);
+    renderFileList();
+    loadAllFiles();
+  }
+
+  function renderFileList() {
+    const list = document.getElementById('fileList');
+    list.innerHTML = '';
+    loadedFiles.forEach(f => {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(0,212,170,0.07);border:1px solid rgba(0,212,170,0.25);border-radius:8px;font-size:13px;';
+      div.innerHTML = `<span>✅</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-weight:500;flex:1;">${f.name}</span>
+        <button onclick="removeFile('${f.name}')" style="background:rgba(239,68,68,0.15);border:none;color:#ef4444;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:11px;">Remove</button>`;
+      list.appendChild(div);
+    });
+  }
+
+  function loadAllFiles() {
+    if (!loadedFiles.length) {
+      parsedRows = [];
+      document.getElementById('processBtn').disabled = true;
+      return;
+    }
+
+    const promises = loadedFiles.map(file => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = e => resolve({ name: file.name, text: e.target.result });
+      reader.readAsText(file);
+    }));
+
+    Promise.all(promises).then(results => {
+      // Merge all CSVs, deduplicate by Consignment_ID
+      const seen = new Set();
+      parsedRows = [];
+      results.forEach(({ name, text }) => {
+        const rows = parseCSV(text);
+        rows.forEach(row => {
+          const key = row['Consignment_ID'];
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            parsedRows.push(row);
+          }
+        });
+      });
+      const fileWord = loadedFiles.length === 1 ? 'file' : 'files';
+      dropZone.querySelector('.drop-text').innerHTML = `<strong style="color:var(--accent)">${loadedFiles.length} ${fileWord} loaded</strong> — ${parsedRows.length} rows total (duplicates removed)`;
+      document.getElementById('processBtn').disabled = false;
+    });
+  }
+
+  function parseCSV(text) {
+    const lines = text.trim().split('\n');
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^\uFEFF/, ''));
+    return lines.slice(1).filter(l => l.trim()).map(line => {
+      const vals = [];
+      let cur = '', inQ = false;
+      for (const c of line) {
+        if (c === '"') inQ = !inQ;
+        else if (c === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+        else cur += c;
+      }
+      vals.push(cur.trim());
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = (vals[i] || '').replace(/^"+|"+$/g, '').trim());
+      return obj;
+    });
+  }
+
+  function processFile() {
+    const settleDate = document.getElementById('settleDate').value;
+    const depositTo  = document.getElementById('depositTo').value;
+    const paymentMode = document.getElementById('paymentMode').value;
+    const settleRef  = document.getElementById('settleRef').value;
+
+    processedData = [];
+
+    // Group by Merchant_Order_ID
+    const grouped = {};
+    for (const row of parsedRows) {
+      const id = row['Merchant_Order_ID'];
+      if (!grouped[id]) grouped[id] = [];
+      grouped[id].push(row);
+    }
+
+    let totalCollected = 0, totalFees = 0, totalPayout = 0, totalLoss = 0, deliveryCount = 0;
+
+    for (const [orderId, rows] of Object.entries(grouped)) {
+      const deliveryRow = rows.find(r => r['Invoice type'] === 'delivery');
+      const returnRow   = rows.find(r => r['Invoice type'] === 'return');
+      const extraRows   = rows.filter(r => r['Invoice type'] !== 'delivery' && r['Invoice type'] !== 'return');
+
+      // Pure return — skip
+      if (returnRow && !deliveryRow) {
+        processedData.push({ orderId, consignment: returnRow['Consignment_ID'], recipient: returnRow['Recipient_Name'], type: 'return', collected: 0, pathaoFee: 0, netPayout: 0, action: 'SKIP — Return', settleDate, depositTo, paymentMode, settleRef });
+        continue;
+      }
+
+      if (!deliveryRow) continue;
+
+      const collected   = parseFloat(deliveryRow['Collected_Amount']) || 0;
+      const collectable = parseFloat(deliveryRow['Collectable_Amount']) || 0;
+      const payout      = parseFloat(deliveryRow['Payout']) || 0;
+      const extraFeeDeductions = extraRows.reduce((s, r) => {
+        const p = parseFloat(r['Payout']) || 0;
+        return s + (p < 0 ? Math.abs(p) : 0);
+      }, 0);
+      const netPayout  = payout - extraFeeDeductions;
+      const pathaoFee  = collected - netPayout;
+      // Flag partial: customer paid less than what should have been collected
+      const isPartial  = collectable > 0 && (collectable - collected) > 1;
+
+      // Failed delivery: negative payout — Pathao deducted from your settlement
+      if (netPayout < 0) {
+        processedData.push({ orderId, consignment: deliveryRow['Consignment_ID'], recipient: deliveryRow['Recipient_Name'], type: 'failed_delivery', collected, collectable, pathaoFee: 0, netPayout, isPartial: false, isReturnRecovery: false, action: '❌ FAILED DELIVERY — deducted ৳' + Math.abs(netPayout).toFixed(2), settleDate, depositTo, paymentMode, settleRef });
+        totalLoss += Math.abs(netPayout);
+        continue;
+      }
+      // Skip zero payout
+      if (collected === 0) {
+        processedData.push({ orderId, consignment: deliveryRow['Consignment_ID'], recipient: deliveryRow['Recipient_Name'], type: 'skip', collected, collectable, pathaoFee, netPayout, isPartial: false, isReturnRecovery: false, action: 'SKIP — Zero payout', settleDate, depositTo, paymentMode, settleRef });
+        continue;
+      }
+
+      deliveryCount++;
+      totalCollected += collected;
+      totalFees      += pathaoFee;
+      totalPayout    += netPayout;
+
+      // Return Income: product returned, customer ONLY paid delivery charge (small amount ≤200 BDT)
+      // If collected > 200, it means actual product money was collected = partial payment, not return income
+      const isReturnIncome = collectable > 0 && collected < collectable && collected > 0 && netPayout >= 1 && collected <= 200;
+
+      let rowType, action;
+      if (isReturnIncome) {
+        rowType = 'return_recovery';
+        action  = '💰 RETURN INCOME — profit ৳' + netPayout.toFixed(2);
+      } else if (isPartial) {
+        rowType = 'partial_paid';
+        action  = '⚠️ PARTIAL — collectable ৳' + collectable.toFixed(2);
+      } else {
+        rowType = 'delivery';
+        action  = 'RECORD PAYMENT';
+      }
+      processedData.push({ orderId, consignment: deliveryRow['Consignment_ID'], recipient: deliveryRow['Recipient_Name'], type: rowType, collected, collectable, pathaoFee, netPayout, isPartial, isReturnIncome, action, settleDate, depositTo, paymentMode, settleRef });
+    }
+
+    // Stats
+    const netSettlement = totalPayout - totalLoss;
+    document.getElementById('statDeliveries').textContent = deliveryCount;
+    document.getElementById('statCollected').textContent  = '৳' + totalCollected.toLocaleString('en-BD', { minimumFractionDigits: 2 });
+    document.getElementById('statFees').textContent       = '৳' + totalFees.toLocaleString('en-BD', { minimumFractionDigits: 2 });
+    document.getElementById('statPayout').textContent     = '৳' + totalPayout.toLocaleString('en-BD', { minimumFractionDigits: 2 });
+    document.getElementById('statLoss').textContent       = '৳' + totalLoss.toLocaleString('en-BD', { minimumFractionDigits: 2 });
+    document.getElementById('statPartial').textContent    = processedData.filter(r => r.type === 'partial_paid').length;
+    document.getElementById('statNet').textContent        = '৳' + netSettlement.toLocaleString('en-BD', { minimumFractionDigits: 2 });
+
+    renderTable('all');
+    document.getElementById('results').classList.remove('hidden');
+    document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function renderTable(filter) {
+    const tbody = document.getElementById('resultsBody');
+    tbody.innerHTML = '';
+
+    const filtered = processedData.filter(r => {
+      if (filter === 'all') return true;
+      if (filter === 'delivery') return r.type === 'delivery';
+      if (filter === 'partial') return r.type === 'partial_paid';
+      if (filter === 'recovery') return r.type === 'return_recovery';
+      if (filter === 'failed') return r.type === 'failed_delivery';
+      if (filter === 'partial') return r.type === 'partial_paid';
+      if (filter === 'skip') return r.type !== 'delivery' && r.type !== 'partial_paid' && r.type !== 'return_recovery' && r.type !== 'failed_delivery';
+      return true;
+    });
+
+    for (const r of filtered) {
+      const tr = document.createElement('tr');
+      const badge = {
+        delivery:         '<span class="badge badge-delivery">delivery</span>',
+        partial_paid:     '<span class="badge badge-return">⚠️ partial</span>',
+        return_recovery:  '<span class="badge" style="background:rgba(14,165,233,0.15);color:#0ea5e9">💰 return income</span>',
+        failed_delivery:  '<span class="badge badge-partial">❌ failed</span>',
+        return:           '<span class="badge badge-return">return</span>',
+        partial:          '<span class="badge badge-partial">partial</span>',
+        skip:             '<span class="badge badge-fee">skip</span>',
+      }[r.type] || '<span class="badge badge-fee">other</span>';
+
+      const shortfallStr = r.isPartial && !r.isReturnIncome ? ` <span style="color:var(--danger);font-size:10px">(collectable ৳${r.collectable.toFixed(2)})</span>` : '';
+      const ac = (r.type === 'delivery') ? 'amount-pos' : (r.type === 'partial_paid') ? 'amount-warn' : 'amount-muted';
+
+      tr.innerHTML = `
+        <td>${r.orderId}</td>
+        <td style="color:var(--muted);font-size:11px">${r.consignment}</td>
+        <td style="font-family:'IBM Plex Sans',sans-serif;font-size:12px">${r.recipient}</td>
+        <td>${badge}</td>
+        <td class="${r.isPartial ? 'amount-warn' : ''}">৳${r.collected.toFixed(2)}${shortfallStr}</td>
+        <td class="amount-warn">৳${r.pathaoFee.toFixed(2)}</td>
+        <td class="amount-muted">৳${r.netPayout.toFixed(2)}</td>
+        <td class="${ac}" style="font-size:11px">${r.action}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function filterRows(type, btn) {
+    document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable(type);
+  }
+
+  function downloadPaymentsCSV() {
+    const payments = processedData.filter(r => r.type === 'delivery'); // partial_paid, return_recovery excluded — handle separately
+    const headers = ['Invoice Number', 'Payment Date', 'Amount Received', 'Bank Charges', 'Payment Mode', 'Deposit To', 'Reference Number'];
+    const rows = payments.map(r => [
+      r.orderId,
+      r.settleDate,
+      r.collected.toFixed(2),   // Full amount collected from customer
+      r.pathaoFee.toFixed(2),   // Pathao fee (COD % + delivery) as bank charges
+      r.paymentMode,
+      r.depositTo,
+      r.settleRef || r.consignment
+    ]);
+    downloadCSV([headers, ...rows], 'zoho_payments_import.csv');
+  }
+
+  function downloadPartialCSV() {
+    const partials = processedData.filter(r => r.type === 'partial_paid');
+    if (!partials.length) { alert('No partial orders in this settlement.'); return; }
+    const headers = ['Order ID', 'Consignment', 'Recipient', 'Collected', 'Collectable', 'Pathao Fee', 'Net Payout', 'Settlement Date', 'Note'];
+    const rows = partials.map(r => [
+      r.orderId, r.consignment, r.recipient,
+      r.collected.toFixed(2), r.collectable.toFixed(2),
+      r.pathaoFee.toFixed(2), r.netPayout.toFixed(2),
+      r.settleDate,
+      'Run through Partial Order Fixer — check Nuport for delivered vs returned items'
+    ]);
+    downloadCSV([headers, ...rows], 'pathao_partial_orders.csv');
+  }
+
+  function downloadPartialCSV() {
+    const partials = processedData.filter(r => r.type === 'partial_paid');
+    if (!partials.length) { alert('No partial orders in this settlement.'); return; }
+    const headers = ['Order ID', 'Consignment', 'Recipient', 'Collected', 'Collectable', 'Pathao Fee', 'Net Payout', 'Settlement Date', 'Note'];
+    const rows = partials.map(r => [
+      r.orderId, r.consignment, r.recipient,
+      r.collected.toFixed(2), r.collectable.toFixed(2),
+      r.pathaoFee.toFixed(2), r.netPayout.toFixed(2),
+      r.settleDate,
+      'Run through Partial Order Fixer — check Nuport for delivered vs returned items'
+    ]);
+    downloadCSV([headers, ...rows], 'pathao_partial_orders.csv');
+  }
+
+  function downloadFailedCSV() {
+    const failed = processedData.filter(r => r.type === 'failed_delivery');
+    if (!failed.length) { alert('No failed deliveries in this settlement.'); return; }
+    const headers = ['Order ID', 'Consignment', 'Recipient', 'Loss Amount', 'Settlement Date', 'Note'];
+    const rows = failed.map(r => [
+      r.orderId, r.consignment, r.recipient,
+      Math.abs(r.netPayout).toFixed(2),
+      r.settleDate,
+      'Record as Delivery Expense in Zoho Books Banking (Money Out)'
+    ]);
+    downloadCSV([headers, ...rows], 'pathao_failed_deliveries.csv');
+  }
+
+  function downloadRecoveryCSV() {
+    const recoveries = processedData.filter(r => r.type === 'return_recovery');
+    if (!recoveries.length) { alert('No return recovery orders in this settlement.'); return; }
+    const headers = ['Order ID', 'Consignment', 'Recipient', 'Collected', 'Pathao Fee', 'Net Recovery', 'Settlement Date', 'Note'];
+    const rows = recoveries.map(r => [
+      r.orderId, r.consignment, r.recipient,
+      r.collected.toFixed(2), r.pathaoFee.toFixed(2), r.netPayout.toFixed(2),
+      r.settleDate,
+      'Record as Other Income in Zoho Books → Banking → City Bank → Money In'
+    ]);
+    downloadCSV([headers, ...rows], 'pathao_return_income.csv');
+  }
+
+  function downloadSkippedCSV() {
+    const skipped = processedData.filter(r => !['delivery', 'partial_paid', 'return_recovery', 'failed_delivery'].includes(r.type));
+    if (!skipped.length) { alert('No skipped orders in this settlement.'); return; }
+    const headers = ['Invoice Number', 'Consignment', 'Recipient', 'Type', 'Collected', 'Pathao Fee', 'Net Payout', 'Reason'];
+    const rows = skipped.map(r => [r.orderId, r.consignment, r.recipient, r.type, r.collected.toFixed(2), r.pathaoFee.toFixed(2), r.netPayout.toFixed(2), r.action]);
+    downloadCSV([headers, ...rows], 'pathao_skipped_orders.csv');
+  }
+
+  function downloadCSV(data, filename) {
+    const csv = data.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+</script>
+</body>
+</html>
