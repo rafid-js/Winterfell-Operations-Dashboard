@@ -505,9 +505,9 @@ tr:last-child td { border-bottom: none; }
     <div class="nav-item" onclick="showPage('partial')" data-page="partial">
       <span class="nav-icon">🔧</span> Partial Orders
     </div>
-    <div class="nav-item" onclick="showPage('reconcile')" data-page="reconcile">
-      <span class="nav-icon">🔄</span> Reconciliation
-    </div>
+    <a class="nav-item" href="/reconciliation.html" target="_blank" data-page="reconcile">
+      <span class="nav-icon">🔄</span> Reconciliation ↗
+    </a>
   </nav>
   <div class="sidebar-footer">
     <span class="status-dot"></span>Connected
@@ -688,13 +688,6 @@ tr:last-child td { border-bottom: none; }
       <div class="result-box" id="partialResult"></div>
     </div>
   </div>
-
-  <!-- ── Reconciliation ── -->
-  <div class="page" id="page-reconcile">
-    <div class="page-header">
-      <div class="page-title">🔄 Reconciliation Tool</div>
-      <div class="page-subtitle">Process Pathao settlement CSVs — drop files, generate all CSVs</div>
-    </div>
 
     <div class="card">
       <div class="card-title">01 — Upload Pathao Settlement CSVs</div>
@@ -1095,167 +1088,6 @@ async function applyPartialFix() {
   }
 }
 
-
-// ── Reconciliation Tool ───────────────────────────────────────
-let reconFiles = [];
-let reconData = [];
-let reconResults = { payments: [], partial: [], return: [], failed: [], skipped: [] };
-
-document.getElementById('reconDate').value = new Date().toISOString().split('T')[0];
-
-const reconDZ = document.getElementById('reconDropZone');
-reconDZ.addEventListener('dragover', e => { e.preventDefault(); reconDZ.classList.add('drag-over'); });
-reconDZ.addEventListener('dragleave', () => reconDZ.classList.remove('drag-over'));
-reconDZ.addEventListener('drop', e => { e.preventDefault(); reconDZ.classList.remove('drag-over'); addReconFiles(Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv'))); });
-document.getElementById('reconFileInput').addEventListener('change', e => addReconFiles(Array.from(e.target.files)));
-
-function addReconFiles(files) {
-  files.forEach(f => { if (!reconFiles.find(x => x.name === f.name)) reconFiles.push(f); });
-  renderReconFileList();
-  loadReconFiles();
-}
-
-function removeReconFile(name) {
-  reconFiles = reconFiles.filter(f => f.name !== name);
-  renderReconFileList();
-  loadReconFiles();
-}
-
-function renderReconFileList() {
-  const list = document.getElementById('reconFileList');
-  list.innerHTML = '';
-  reconFiles.forEach(f => {
-    const div = document.createElement('div');
-    div.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(0,229,176,0.06);border:1px solid rgba(0,229,176,0.2);border-radius:8px;font-size:13px;font-family:"JetBrains Mono",monospace;';
-    div.innerHTML = `<span>✅</span><span style="flex:1;">${f.name}</span><button onclick="removeReconFile('${f.name}')" style="background:rgba(255,77,106,0.15);border:none;color:#ff4d6a;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:11px;">Remove</button>`;
-    list.appendChild(div);
-  });
-}
-
-function loadReconFiles() {
-  if (!reconFiles.length) { document.getElementById('reconProcessBtn').disabled = true; return; }
-  const promises = reconFiles.map(file => new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = e => resolve({ name: file.name, text: e.target.result });
-    reader.readAsText(file);
-  }));
-  Promise.all(promises).then(results => {
-    const seen = new Set();
-    reconData = [];
-    results.forEach(({ text }) => {
-      parseReconCSV(text).forEach(row => {
-        const key = row['Consignment_ID'];
-        if (key && !seen.has(key)) { seen.add(key); reconData.push(row); }
-      });
-    });
-    reconDZ.querySelector('.drop-zone-text').innerHTML = `<strong style="color:var(--accent)">${reconFiles.length} file(s) loaded</strong> — ${reconData.length} rows total`;
-    document.getElementById('reconProcessBtn').disabled = false;
-  });
-}
-
-function parseReconCSV(text) {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^\uFEFF|^"|"$/g, ''));
-  return lines.slice(1).filter(l => l.trim()).map(line => {
-    const vals = []; let cur = '', inQ = false;
-    for (const c of line) {
-      if (c === '"') inQ = !inQ;
-      else if (c === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
-      else cur += c;
-    }
-    vals.push(cur.trim());
-    const obj = {};
-    headers.forEach((h, i) => obj[h] = (vals[i] || '').replace(/^"+|"+$/g, '').trim());
-    return obj;
-  });
-}
-
-function processRecon() {
-  const settleDate = document.getElementById('reconDate').value;
-  const depositTo = document.getElementById('reconBank').value;
-  const settleRef = document.getElementById('reconRef').value;
-  reconResults = { payments: [], partial: [], return: [], failed: [], skipped: [] };
-
-  // Group by Merchant_Order_ID
-  const grouped = {};
-  reconData.forEach(row => {
-    const id = row['Merchant_Order_ID'];
-    if (!grouped[id]) grouped[id] = [];
-    grouped[id].push(row);
-  });
-
-  Object.entries(grouped).forEach(([orderId, rows]) => {
-    const deliveryRow = rows.find(r => r['Invoice type'] === 'delivery');
-    const returnRow = rows.find(r => r['Invoice type'] === 'return');
-    const extraRows = rows.filter(r => r['Invoice type'] !== 'delivery' && r['Invoice type'] !== 'return');
-
-    if (returnRow && !deliveryRow) {
-      reconResults.skipped.push({ orderId, type: 'return', action: 'SKIP — Return' });
-      return;
-    }
-    if (!deliveryRow) return;
-
-    const collected = parseFloat(deliveryRow['Collected_Amount']) || 0;
-    const collectable = parseFloat(deliveryRow['Collectable_Amount']) || 0;
-    const payout = parseFloat(deliveryRow['Payout']) || 0;
-    const extraDeduct = extraRows.reduce((s, r) => { const p = parseFloat(r['Payout']) || 0; return s + (p < 0 ? Math.abs(p) : 0); }, 0);
-    const netPayout = payout - extraDeduct;
-    const pathaoFee = collected - netPayout;
-    const isReturnIncome = collectable > 0 && collected < collectable && collected > 0 && netPayout >= 1 && collected <= 200;
-    const isPartial = collectable > 0 && (collectable - collected) > 1 && !isReturnIncome;
-
-    const base = { orderId, consignment: deliveryRow['Consignment_ID'], recipient: deliveryRow['Recipient_Name'], collected, collectable, pathaoFee: Math.max(0, pathaoFee), netPayout, settleDate, depositTo, paymentMode: 'Bank Transfer', settleRef };
-
-    if (netPayout < 0) {
-      reconResults.failed.push({ ...base, type: 'failed', action: 'FAILED DELIVERY', loss: Math.abs(netPayout) });
-    } else if (collected === 0) {
-      reconResults.skipped.push({ ...base, type: 'skip', action: 'SKIP — Zero payout' });
-    } else if (isReturnIncome) {
-      reconResults.return.push({ ...base, type: 'return_income', action: 'RETURN INCOME' });
-    } else if (isPartial) {
-      reconResults.partial.push({ ...base, type: 'partial', action: 'PARTIAL ORDER' });
-    } else {
-      reconResults.payments.push({ ...base, type: 'delivery', action: 'RECORD PAYMENT' });
-    }
-  });
-
-  document.getElementById('rStatDeliveries').textContent = reconResults.payments.length;
-  document.getElementById('rStatPartial').textContent = reconResults.partial.length;
-  document.getElementById('rStatReturn').textContent = reconResults.return.length;
-  document.getElementById('rStatFailed').textContent = reconResults.failed.length;
-  document.getElementById('rStatSkipped').textContent = reconResults.skipped.length;
-  document.getElementById('reconStatsCard').style.display = 'block';
-}
-
-function downloadReconCSV(type) {
-  let rows, filename, headers;
-  if (type === 'payments') {
-    headers = ['Invoice Number','Payment Date','Amount Received','Bank Charges','Payment Mode','Deposit To','Reference Number'];
-    rows = reconResults.payments.map(r => [r.orderId, r.settleDate, r.collected.toFixed(2), r.pathaoFee.toFixed(2), r.paymentMode, r.depositTo, r.settleRef || r.consignment]);
-    filename = 'zoho_payments_import.csv';
-  } else if (type === 'partial') {
-    headers = ['Order ID','Consignment','Recipient','Collected','Collectable','Pathao Fee','Net Payout','Settlement Date','Note'];
-    rows = reconResults.partial.map(r => [r.orderId, r.consignment, r.recipient, r.collected.toFixed(2), r.collectable.toFixed(2), r.pathaoFee.toFixed(2), r.netPayout.toFixed(2), r.settleDate, 'Run through Partial Order Fixer']);
-    filename = 'pathao_partial_orders.csv';
-  } else if (type === 'return') {
-    headers = ['Order ID','Consignment','Recipient','Collected','Pathao Fee','Net Recovery','Settlement Date','Note'];
-    rows = reconResults.return.map(r => [r.orderId, r.consignment, r.recipient, r.collected.toFixed(2), r.pathaoFee.toFixed(2), r.netPayout.toFixed(2), r.settleDate, 'Record as Other Income in Zoho Banking']);
-    filename = 'pathao_return_income.csv';
-  } else if (type === 'failed') {
-    headers = ['Order ID','Consignment','Recipient','Loss Amount','Settlement Date','Note'];
-    rows = reconResults.failed.map(r => [r.orderId, r.consignment, r.recipient, Math.abs(r.netPayout).toFixed(2), r.settleDate, 'Record as Delivery Expense in Zoho Banking']);
-    filename = 'pathao_failed_deliveries.csv';
-  } else {
-    headers = ['Order ID','Consignment','Recipient','Type','Action'];
-    rows = reconResults.skipped.map(r => [r.orderId, r.consignment || '', r.recipient || '', r.type, r.action]);
-    filename = 'pathao_skipped_orders.csv';
-  }
-  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
 
 // ── Helpers ───────────────────────────────────────────────────
 function showResult(id, type, msg) {
