@@ -191,10 +191,42 @@ app.post('/api/invoice/create', async (req, res) => {
     if (invResp.code !== 0) throw new Error(invResp.message);
 
     const inv = invResp.invoice;
+
     // Mark as sent
     await zohoPost(`/invoices/${inv.invoice_id}/status/sent`, {});
 
-    res.json({ success: true, invoiceId: inv.invoice_id, invoiceNumber: inv.invoice_number, total: inv.total });
+    // Record advance payment if provided
+    let advanceRecorded = 0;
+    const { advanceAmount, advanceMethod, advanceAgent } = req.body;
+    if (advanceAmount && parseFloat(advanceAmount) > 0) {
+      const methodLabel = advanceMethod === 'cash' ? 'Cash' : advanceMethod === 'banktransfer' ? 'Bank Transfer' : 'bKash';
+      const payResp = await zohoPost('/customerpayments', {
+        account_id: process.env.ZOHO_BANK_ACCOUNT_ID,
+        customer_id: inv.customer_id,
+        invoice_id: inv.invoice_id,
+        invoices: [{ invoice_id: inv.invoice_id, amount_applied: parseFloat(advanceAmount) }],
+        amount: parseFloat(advanceAmount),
+        amount_applied: parseFloat(advanceAmount),
+        bank_charges: 0,
+        date,
+        payment_mode: advanceMethod || 'others',
+        reference_number: `${methodLabel} advance — ${customerName}${advanceAgent ? ' via ' + advanceAgent : ''} — ${orderId}`
+      });
+      if (payResp.code === 0) advanceRecorded = parseFloat(advanceAmount);
+    }
+
+    const balance = parseFloat(inv.total) - advanceRecorded;
+    const methodLabel = advanceMethod === 'cash' ? 'Cash' : advanceMethod === 'banktransfer' ? 'Bank Transfer' : 'bKash';
+
+    res.json({
+      success: true,
+      invoiceId: inv.invoice_id,
+      invoiceNumber: inv.invoice_number,
+      total: inv.total,
+      advanceRecorded: advanceRecorded || null,
+      advanceMethod: advanceRecorded ? methodLabel : null,
+      balance: Math.max(0, balance)
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
