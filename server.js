@@ -78,6 +78,13 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Auth ping endpoint
+app.get('/api/ping', (req, res) => {
+  const auth = req.headers['x-app-password'];
+  if (auth !== process.env.APP_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ ok: true });
+});
+
 // ── Pages ────────────────────────────────────────────────────
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
