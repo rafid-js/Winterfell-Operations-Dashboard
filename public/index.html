@@ -502,6 +502,9 @@ tr:last-child td { border-bottom: none; }
       <span class="nav-icon">⚡</span> Batch Payments
     </div>
     <div class="nav-section">Orders</div>
+    <div class="nav-item" onclick="showPage('createinvoice')" data-page="createinvoice">
+      <span class="nav-icon">📋</span> Create Invoice
+    </div>
     <div class="nav-item" onclick="showPage('partial')" data-page="partial">
       <span class="nav-icon">🔧</span> Partial Orders
     </div>
@@ -533,7 +536,7 @@ tr:last-child td { border-bottom: none; }
         </div>
         <div class="field">
           <label>Customer Name</label>
-          <input type="text" id="bkashCustomer" placeholder="Auto-filled from order" readonly>
+          <input type="text" id="bkashCustomer" placeholder="Auto-filled or type manually">
         </div>
       </div>
       <div id="invoicePreview" class="invoice-preview">
@@ -615,6 +618,71 @@ tr:last-child td { border-bottom: none; }
     </button>
   </div>
 
+  <!-- ── Create Invoice ── -->
+  <div class="page" id="page-createinvoice">
+    <div class="page-header">
+      <div class="page-title">📋 Create Invoice</div>
+      <div class="page-subtitle">Create a new customer invoice in Zoho Books</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Customer Details</div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Order / Invoice Number</label>
+          <input type="text" id="ciOrderId" placeholder="e.g. SO-65001">
+        </div>
+        <div class="field">
+          <label>Customer Name</label>
+          <input type="text" id="ciCustomerName" placeholder="e.g. Rafid Hasan">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Invoice Date & Delivery</div>
+      <div class="grid-3">
+        <div class="field">
+          <label>Invoice Date</label>
+          <input type="date" id="ciDate">
+        </div>
+        <div class="field">
+          <label>Delivery Charge (BDT)</label>
+          <input type="number" id="ciShipping" placeholder="e.g. 120" value="0">
+        </div>
+        <div class="field">
+          <label>Payment Method</label>
+          <select id="ciPaymentMethod">
+            <option value="cod">Cash on Delivery (COD)</option>
+            <option value="bkash">bKash</option>
+            <option value="bank">Bank Transfer</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Line Items</div>
+      <div id="ciItems">
+        <div class="ci-item-row" style="display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:10px; margin-bottom:10px; align-items:end;">
+          <div class="field"><label>SKU</label><input type="text" class="ci-sku" placeholder="e.g. 54232-54233" oninput="lookupSKU(this)"></div>
+          <div class="field"><label>Product Name</label><input type="text" class="ci-name" placeholder="Auto-filled" readonly style="background:var(--surface)"></div>
+          <div class="field"><label>Price (BDT)</label><input type="number" class="ci-price" placeholder="e.g. 990"></div>
+          <div style="padding-bottom:2px;"><button onclick="removeCIItem(this)" class="btn btn-danger" style="padding:12px 14px;">✕</button></div>
+        </div>
+      </div>
+      <button class="btn btn-secondary" onclick="addCIItem()" style="margin-top:8px; width:100%;">+ Add Item</button>
+    </div>
+
+    <div class="card" id="ciSummaryCard">
+      <div class="card-title">Summary</div>
+      <div id="ciSummaryBox" style="background:var(--surface2); border-radius:10px; padding:14px 16px; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:2;"></div>
+    </div>
+
+    <button class="btn btn-primary btn-full" onclick="createInvoice()">Create Invoice in Zoho Books</button>
+    <div class="result-box" id="ciResult"></div>
+  </div>
+
   <!-- ── Partial Orders ── -->
   <div class="page" id="page-partial">
     <div class="page-header">
@@ -688,32 +756,10 @@ tr:last-child td { border-bottom: none; }
       <div class="result-box" id="partialResult"></div>
     </div>
   </div>
-
-    <div class="card">
-      <div class="card-title">01 — Upload Pathao Settlement CSVs</div>
-      <div class="drop-zone" id="reconDropZone">
-        <div class="drop-zone-icon">📂</div>
-        <div class="drop-zone-text">Drop multiple Pathao settlement CSVs here<br>or <strong onclick="document.getElementById('reconFileInput').click()">click to browse</strong><br><span style="font-size:11px;margin-top:6px;display:inline-block;">Select any number of files — duplicates removed automatically</span></div>
-      </div>
       <input type="file" id="reconFileInput" accept=".csv" multiple style="display:none">
       <div id="reconFileList" style="margin-top:12px;display:flex;flex-direction:column;gap:6px;"></div>
     </div>
-
-    <div class="card">
-      <div class="card-title">02 — Settlement Info</div>
-      <div class="grid-3">
-        <div class="field"><label>Settlement Date</label><input type="date" id="reconDate"></div>
-        <div class="field"><label>Deposit To</label><input type="text" id="reconBank" value="City Bank"></div>
-        <div class="field"><label>Reference</label><input type="text" id="reconRef" placeholder="e.g. DW250426XXXX"></div>
-      </div>
     </div>
-
-    <button class="btn btn-primary btn-full" id="reconProcessBtn" onclick="processRecon()" disabled>Process Settlement</button>
-
-    <div class="card" id="reconStatsCard" style="display:none; margin-top:20px;">
-      <div class="card-title">Results</div>
-      <div class="stats-row stats-5" style="margin-bottom:16px;">
-        <div class="stat-card"><div class="stat-val green" id="rStatDeliveries">0</div><div class="stat-label">Deliveries</div></div>
         <div class="stat-card"><div class="stat-val warn" id="rStatPartial">0</div><div class="stat-label">Partial</div></div>
         <div class="stat-card"><div class="stat-val accent" id="rStatReturn">0</div><div class="stat-label">Return Income</div></div>
         <div class="stat-card"><div class="stat-val danger" id="rStatFailed">0</div><div class="stat-label">Failed</div></div>
@@ -1088,6 +1134,108 @@ async function applyPartialFix() {
   }
 }
 
+
+
+// ── Create Invoice ────────────────────────────────────────────
+document.getElementById('ciDate').value = new Date().toISOString().split('T')[0];
+
+function addCIItem() {
+  const container = document.getElementById('ciItems');
+  const div = document.createElement('div');
+  div.className = 'ci-item-row';
+  div.style.cssText = 'display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:10px; margin-bottom:10px; align-items:end;';
+  div.innerHTML = `
+    <div class="field"><label>SKU</label><input type="text" class="ci-sku" placeholder="e.g. 54232-54233" oninput="lookupSKU(this)"></div>
+    <div class="field"><label>Product Name</label><input type="text" class="ci-name" placeholder="Auto-filled" readonly style="background:var(--surface)"></div>
+    <div class="field"><label>Price (BDT)</label><input type="number" class="ci-price" placeholder="e.g. 990" oninput="updateCISummary()"></div>
+    <div style="padding-bottom:2px;"><button onclick="removeCIItem(this)" class="btn btn-danger" style="padding:12px 14px;">✕</button></div>`;
+  container.appendChild(div);
+}
+
+function removeCIItem(btn) {
+  const rows = document.querySelectorAll('.ci-item-row');
+  if (rows.length > 1) { btn.closest('.ci-item-row').remove(); updateCISummary(); }
+}
+
+async function lookupSKU(input) {
+  const sku = input.value.trim();
+  if (!sku || sku.length < 5) return;
+  const row = input.closest('.ci-item-row');
+  const nameInput = row.querySelector('.ci-name');
+  const priceInput = row.querySelector('.ci-price');
+  nameInput.placeholder = 'Looking up...';
+  try {
+    const res = await apiFetch(`/api/sku/${encodeURIComponent(sku)}`);
+    const data = await res.json();
+    if (!data.error) {
+      nameInput.value = data.name;
+      if (!priceInput.value) priceInput.value = data.price;
+      priceInput.oninput = updateCISummary;
+      updateCISummary();
+    } else {
+      nameInput.placeholder = 'Not found — type manually';
+      nameInput.removeAttribute('readonly');
+    }
+  } catch(e) { nameInput.placeholder = 'Error — type manually'; nameInput.removeAttribute('readonly'); }
+}
+
+function updateCISummary() {
+  let subtotal = 0;
+  document.querySelectorAll('.ci-item-row').forEach(row => {
+    subtotal += parseFloat(row.querySelector('.ci-price')?.value || 0);
+  });
+  const shipping = parseFloat(document.getElementById('ciShipping')?.value || 0);
+  const total = subtotal + shipping;
+  document.getElementById('ciSummaryBox').innerHTML = `
+    <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Subtotal</span><span>৳${subtotal.toLocaleString()}</span></div>
+    <div style="display:flex;justify-content:space-between;"><span style="color:var(--muted)">Delivery Charge</span><span>৳${shipping.toLocaleString()}</span></div>
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:8px;padding-top:8px;"><span style="color:var(--muted)">Total</span><span style="color:var(--accent);font-weight:700;">৳${total.toLocaleString()}</span></div>`;
+}
+
+// Update summary when shipping changes
+document.getElementById('ciShipping')?.addEventListener('input', updateCISummary);
+
+async function createInvoice() {
+  const orderId = document.getElementById('ciOrderId').value.trim();
+  const customerName = document.getElementById('ciCustomerName').value.trim();
+  const date = document.getElementById('ciDate').value;
+  const shipping = parseFloat(document.getElementById('ciShipping').value || 0);
+  const paymentMethod = document.getElementById('ciPaymentMethod').value;
+
+  const items = [];
+  let valid = true;
+  document.querySelectorAll('.ci-item-row').forEach(row => {
+    const sku = row.querySelector('.ci-sku').value.trim();
+    const name = row.querySelector('.ci-name').value.trim();
+    const price = parseFloat(row.querySelector('.ci-price').value || 0);
+    if (!sku || price <= 0) { valid = false; return; }
+    items.push({ sku, name, price });
+  });
+
+  if (!orderId || !customerName || !valid || items.length === 0) {
+    showResult('ciResult', 'error', 'Please fill in all fields — Order ID, Customer Name, and at least one item with SKU and price');
+    return;
+  }
+
+  try {
+    const res = await apiFetch('/api/invoice/create', {
+      method: 'POST',
+      body: JSON.stringify({ orderId, customerName, date, shipping, paymentMethod, items })
+    });
+    const data = await res.json();
+    if (data.error) showResult('ciResult', 'error', data.error);
+    else {
+      showResult('ciResult', 'success', `✅ Invoice ${orderId} created for ${customerName}\nTotal: ৳${data.total}\nInvoice ID: ${data.invoiceId}`);
+      // Reset form
+      document.getElementById('ciOrderId').value = '';
+      document.getElementById('ciCustomerName').value = '';
+      document.getElementById('ciShipping').value = '0';
+      document.getElementById('ciItems').innerHTML = '';
+      addCIItem();
+      updateCISummary();
+    }
+  } catch(e) { showResult('ciResult', 'error', e.message); }
+}
 
 // ── Helpers ───────────────────────────────────────────────────
 function showResult(id, type, msg) {
