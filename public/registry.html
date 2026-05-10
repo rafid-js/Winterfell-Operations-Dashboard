@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Registry — Winterfell Ops</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface2: #1a1a1a;
+    --border: #2a2a2a;
+    --text: #f0f0f0;
+    --muted: #888;
+    --accent: #c8a96e;
+    --live: #4caf7d;
+    --progress: #e0a94b;
+    --planned: #5b9cf6;
+    --paused: #888;
+    --critical: #e05252;
+    --high: #e0a94b;
+    --medium: #5b9cf6;
+    --low: #888;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar {
+    position: fixed; top: 0; left: 0; width: 220px; height: 100vh;
+    background: var(--surface); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 0; z-index: 100;
+  }
+  .sidebar-brand {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px; font-weight: 700; letter-spacing: .15em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .sidebar-brand span { display: block; font-size: 10px; font-weight: 400; color: var(--muted); letter-spacing: .05em; margin-top: 2px; }
+  .nav-section { padding: 12px 12px 4px; font-size: 10px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+  .nav-link {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; font-size: 13px; color: var(--muted);
+    text-decoration: none; border-radius: 6px; margin: 1px 8px;
+    transition: all .15s;
+  }
+  .nav-link:hover { background: var(--surface2); color: var(--text); }
+  .nav-link.active { background: var(--surface2); color: var(--accent); }
+  .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+
+  /* Main */
+  .main { margin-left: 220px; padding: 32px 36px; min-height: 100vh; }
+  .page-header { margin-bottom: 28px; }
+  .page-header h1 { font-size: 22px; font-weight: 600; color: var(--text); }
+  .page-header p { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+  .stat-value { font-size: 26px; font-weight: 600; }
+
+  /* Toolbar */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-btn {
+    font-size: 12px; padding: 5px 14px; border-radius: 20px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; transition: all .15s;
+  }
+  .filter-btn:hover { border-color: var(--accent); color: var(--text); }
+  .filter-btn.active { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
+  .add-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; padding: 8px 16px; border-radius: 8px;
+    border: 1px solid var(--accent); background: transparent;
+    color: var(--accent); cursor: pointer; transition: all .15s; font-weight: 500;
+  }
+  .add-btn:hover { background: var(--accent); color: #000; }
+
+  /* Department sections */
+  .dept-section { margin-bottom: 28px; }
+  .dept-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-icon { font-size: 16px; }
+  .dept-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+  .dept-count {
+    font-size: 11px; background: var(--surface2); border: 1px solid var(--border);
+    padding: 1px 8px; border-radius: 10px; color: var(--muted);
+  }
+
+  /* System cards */
+  .cards-grid { display: flex; flex-direction: column; gap: 8px; }
+  .system-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px;
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 12px; align-items: start; transition: border-color .15s;
+  }
+  .system-card:hover { border-color: #3a3a3a; }
+  .sys-name { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+  .sys-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .sys-meta { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 2px 9px; border-radius: 20px; font-weight: 500; }
+  .badge-live { background: rgba(76,175,125,.15); color: var(--live); border: 1px solid rgba(76,175,125,.3); }
+  .badge-progress { background: rgba(224,169,75,.15); color: var(--progress); border: 1px solid rgba(224,169,75,.3); }
+  .badge-planned { background: rgba(91,156,246,.15); color: var(--planned); border: 1px solid rgba(91,156,246,.3); }
+  .badge-paused { background: rgba(136,136,136,.15); color: var(--paused); border: 1px solid rgba(136,136,136,.2); }
+  .priority-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .p-critical { background: var(--critical); }
+  .p-high { background: var(--high); }
+  .p-medium { background: var(--medium); }
+  .p-low { background: var(--low); }
+  .meta-text { font-size: 11px; color: var(--muted); }
+  .sys-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .edit-btn {
+    font-size: 11px; padding: 4px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; transition: all .15s;
+  }
+  .edit-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 28px; width: 460px; max-width: 95vw;
+  }
+  .modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 20px; color: var(--text); }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+  .field input, .field select, .field textarea {
+    width: 100%; font-size: 13px; padding: 9px 12px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); outline: none;
+    transition: border-color .15s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+  .field textarea { height: 75px; resize: vertical; }
+  .field select option { background: var(--surface2); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; align-items: center; }
+  .btn-save {
+    font-size: 13px; padding: 8px 20px; border-radius: 8px;
+    border: none; background: var(--accent); color: #000;
+    cursor: pointer; font-weight: 600;
+  }
+  .btn-save:hover { opacity: .9; }
+  .btn-cancel {
+    font-size: 13px; padding: 8px 16px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer;
+  }
+  .btn-delete {
+    font-size: 13px; padding: 8px 16px; border-radius: 8px;
+    border: none; background: rgba(224,82,82,.15);
+    color: var(--critical); cursor: pointer; margin-right: auto;
+    border: 1px solid rgba(224,82,82,.3);
+  }
+  .btn-delete:hover { background: rgba(224,82,82,.25); }
+  .save-toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 16px; font-size: 13px;
+    color: var(--live); opacity: 0; transition: opacity .3s; z-index: 300;
+    pointer-events: none;
+  }
+  .save-toast.show { opacity: 1; }
+  .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
+  .loading { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
+  #saveIndicator { font-size: 12px; color: var(--muted); margin-left: 10px; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-brand">WINTERFELL<span>Operations Dashboard</span></div>
+  <div class="nav-section">Finance</div>
+  <a href="/" class="nav-link"><span class="nav-icon">⚡</span> Batch Payments</a>
+  <a href="/" class="nav-link"><span class="nav-icon">📋</span> Create Invoice</a>
+  <a href="/" class="nav-link"><span class="nav-icon">🔧</span> Partial Orders</a>
+  <a href="/reconciliation.html" class="nav-link"><span class="nav-icon">🔄</span> Reconciliation</a>
+  <div class="nav-section">Management</div>
+  <a href="/registry.html" class="nav-link active"><span class="nav-icon">🗂️</span> System Registry</a>
+</div>
+
+<div class="main">
+  <div class="page-header">
+    <h1>System Registry <span id="saveIndicator"></span></h1>
+    <p>Version control for every operational system being built at Winterfell.</p>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="toolbar">
+    <div class="filters" id="filters">
+      <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+      <button class="filter-btn" onclick="setFilter('live',this)">Live</button>
+      <button class="filter-btn" onclick="setFilter('progress',this)">In progress</button>
+      <button class="filter-btn" onclick="setFilter('planned',this)">Planned</button>
+      <button class="filter-btn" onclick="setFilter('paused',this)">Paused</button>
+    </div>
+    <button class="add-btn" onclick="openModal()">+ Add system</button>
+  </div>
+
+  <div id="board"><div class="loading">Loading systems...</div></div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
+  <div class="modal">
+    <h3 id="modalTitle">Add system</h3>
+    <div class="field"><label>System name</label><input id="fName" placeholder="e.g. Invoice automation"></div>
+    <div class="field"><label>Description</label><textarea id="fDesc" placeholder="What does this system do?"></textarea></div>
+    <div class="field"><label>Department</label>
+      <select id="fDept">
+        <option>Finance & Accounting</option>
+        <option>Operations</option>
+        <option>Marketing</option>
+        <option>Customer Support</option>
+        <option>Technology & Infrastructure</option>
+      </select>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Status</label>
+        <select id="fStatus">
+          <option value="live">Live</option>
+          <option value="progress">In progress</option>
+          <option value="planned">Planned</option>
+          <option value="paused">Paused</option>
+        </select>
+      </div>
+      <div class="field"><label>Priority</label>
+        <select id="fPriority">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Version</label><input id="fVersion" placeholder="v1.0"></div>
+      <div class="field"><label>Date</label><input id="fDate" type="date"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-delete" id="deleteBtn" onclick="deleteSystem()" style="display:none">Delete</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-save" onclick="saveSystem()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="save-toast" id="toast">✓ Saved</div>
+
+<script>
+const DEPTS = ['Finance & Accounting','Operations','Marketing','Customer Support','Technology & Infrastructure'];
+const DEPT_ICONS = {
+  'Finance & Accounting':'💰',
+  'Operations':'⚙️',
+  'Marketing':'📣',
+  'Customer Support':'🎧',
+  'Technology & Infrastructure':'🖥️'
+};
+
+let systems = [];
+let editingId = null;
+let activeFilter = 'all';
+
+function statusLabel(s){return{live:'Live',progress:'In progress',planned:'Planned',paused:'Paused'}[s]||s}
+function statusClass(s){return{live:'badge-live',progress:'badge-progress',planned:'badge-planned',paused:'badge-paused'}[s]||'badge-paused'}
+function priorityClass(p){return{critical:'p-critical',high:'p-high',medium:'p-medium',low:'p-low'}[p]||'p-low'}
+
+async function loadSystems(){
+  try {
+    const res = await fetch('/api/registry');
+    systems = await res.json();
+  } catch(e){
+    systems = [];
+  }
+  render();
+}
+
+async function persistSystems(){
+  try {
+    document.getElementById('saveIndicator').textContent = 'Saving...';
+    const res = await fetch('/api/registry', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(systems)
+    });
+    if(!res.ok) throw new Error('Failed');
+    document.getElementById('saveIndicator').textContent = '';
+    showToast();
+  } catch(e){
+    document.getElementById('saveIndicator').textContent = '⚠ Save failed';
+  }
+}
+
+function showToast(){
+  const t = document.getElementById('toast');
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2000);
+}
+
+function renderStats(){
+  const live=systems.filter(s=>s.status==='live').length;
+  const prog=systems.filter(s=>s.status==='progress').length;
+  const plan=systems.filter(s=>s.status==='planned').length;
+  const crit=systems.filter(s=>s.priority==='critical').length;
+  document.getElementById('stats').innerHTML=`
+    <div class="stat"><div class="stat-label">Total systems</div><div class="stat-value" style="color:var(--text)">${systems.length}</div></div>
+    <div class="stat"><div class="stat-label">Live</div><div class="stat-value" style="color:var(--live)">${live}</div></div>
+    <div class="stat"><div class="stat-label">In progress</div><div class="stat-value" style="color:var(--progress)">${prog}</div></div>
+    <div class="stat"><div class="stat-label">Critical</div><div class="stat-value" style="color:var(--critical)">${crit}</div></div>
+  `;
+}
+
+function renderBoard(){
+  const filtered = activeFilter==='all' ? systems : systems.filter(s=>s.status===activeFilter);
+  const board = document.getElementById('board');
+  if(!filtered.length){board.innerHTML='<div class="empty">No systems match this filter.</div>';return;}
+  let html='';
+  DEPTS.forEach(dept=>{
+    const items=filtered.filter(s=>s.dept===dept);
+    if(!items.length)return;
+    html+=`<div class="dept-section">
+      <div class="dept-header">
+        <span class="dept-icon">${DEPT_ICONS[dept]}</span>
+        <span class="dept-label">${dept}</span>
+        <span class="dept-count">${items.length}</span>
+      </div>
+      <div class="cards-grid">`;
+    items.forEach(s=>{
+      html+=`<div class="system-card">
+        <div>
+          <div class="sys-name">${s.name}</div>
+          <div class="sys-desc">${s.desc||''}</div>
+          <div class="sys-meta">
+            <span class="badge ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+            <span class="priority-dot ${priorityClass(s.priority)}"></span>
+            <span class="meta-text">${s.priority} priority</span>
+            ${s.version&&s.version!=='—'?`<span class="meta-text">${s.version}</span>`:''}
+          </div>
+        </div>
+        <div class="sys-right">
+          <span class="meta-text">${s.date||''}</span>
+          <button class="edit-btn" onclick="openModal('${s.id}')">Edit</button>
+        </div>
+      </div>`;
+    });
+    html+='</div></div>';
+  });
+  board.innerHTML=html;
+}
+
+function render(){renderStats();renderBoard();}
+function setFilter(f,btn){
+  activeFilter=f;
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderBoard();
+}
+
+function openModal(id){
+  editingId = id||null;
+  const overlay = document.getElementById('modalOverlay');
+  const deleteBtn = document.getElementById('deleteBtn');
+  if(id){
+    const s = systems.find(x=>x.id===id);
+    if(!s)return;
+    document.getElementById('modalTitle').textContent='Edit system';
+    document.getElementById('fName').value=s.name;
+    document.getElementById('fDesc').value=s.desc||'';
+    document.getElementById('fDept').value=s.dept;
+    document.getElementById('fStatus').value=s.status;
+    document.getElementById('fPriority').value=s.priority;
+    document.getElementById('fVersion').value=s.version==='—'?'':s.version||'';
+    document.getElementById('fDate').value=s.date==='—'?'':s.date||'';
+    deleteBtn.style.display='block';
+  } else {
+    document.getElementById('modalTitle').textContent='Add system';
+    document.getElementById('fName').value='';
+    document.getElementById('fDesc').value='';
+    document.getElementById('fDept').value='Finance & Accounting';
+    document.getElementById('fStatus').value='planned';
+    document.getElementById('fPriority').value='medium';
+    document.getElementById('fVersion').value='';
+    document.getElementById('fDate').value=new Date().toISOString().split('T')[0];
+    deleteBtn.style.display='none';
+  }
+  overlay.classList.add('open');
+}
+
+function closeModal(){
+  document.getElementById('modalOverlay').classList.remove('open');
+  editingId=null;
+}
+
+function handleOverlayClick(e){
+  if(e.target===document.getElementById('modalOverlay'))closeModal();
+}
+
+async function saveSystem(){
+  const name=document.getElementById('fName').value.trim();
+  if(!name){alert('Please enter a system name.');return;}
+  const sys={
+    id: editingId || 'sys_'+Date.now(),
+    name,
+    desc:document.getElementById('fDesc').value.trim(),
+    dept:document.getElementById('fDept').value,
+    status:document.getElementById('fStatus').value,
+    priority:document.getElementById('fPriority').value,
+    version:document.getElementById('fVersion').value.trim()||'—',
+    date:document.getElementById('fDate').value||'—',
+  };
+  if(editingId){
+    const idx=systems.findIndex(x=>x.id===editingId);
+    systems[idx]=sys;
+  } else {
+    systems.push(sys);
+  }
+  await persistSystems();
+  closeModal();
+  render();
+}
+
+async function deleteSystem(){
+  if(!editingId)return;
+  if(!confirm('Delete this system? This cannot be undone.'))return;
+  systems=systems.filter(x=>x.id!==editingId);
+  await persistSystems();
+  closeModal();
+  render();
+}
+
+loadSystems();
+</script>
+</body>
+</html>
