@@ -1,0 +1,120 @@
+[
+  {
+    "id": "sys_1",
+    "name": "Invoice automation",
+    "desc": "Reconciliation with Pathao invoice. Automated invoice creation and matching in Zoho Books.",
+    "dept": "Finance & Accounting",
+    "status": "progress",
+    "priority": "critical",
+    "version": "v0.1",
+    "date": "2026-05-10",
+    "versions": [
+      { "v": "v0.1", "date": "2026-05-10", "notes": "Initial build. Manual reconciliation flow mapped. Zoho Books API connection established." }
+    ]
+  },
+  {
+    "id": "sys_2",
+    "name": "Expense automation",
+    "desc": "Automated expense logging and categorization in Zoho Books.",
+    "dept": "Finance & Accounting",
+    "status": "live",
+    "priority": "critical",
+    "version": "v1.0",
+    "date": "2026-05-10",
+    "versions": [
+      { "v": "v1.0", "date": "2026-05-10", "notes": "Launched. Automated categorization for all vendor payments. Integrated with Zoho Books expense module." }
+    ]
+  },
+  {
+    "id": "sys_3",
+    "name": "Master finance dashboard",
+    "desc": "Unified financial KPI dashboard integrating Zoho Books and Google Sheets with Looker Studio.",
+    "dept": "Finance & Accounting",
+    "status": "live",
+    "priority": "critical",
+    "version": "v1.0",
+    "date": "2026-05-10",
+    "versions": [
+      { "v": "v1.0", "date": "2026-05-10", "notes": "Looker Studio dashboard live. Pulls from Zoho Books and Google Sheets. Covers revenue, COD, expenses." }
+    ]
+  },
+  {
+    "id": "sys_4",
+    "name": "Inventory management supertool",
+    "desc": "Google Sheets/Zoho system with True Demand tracking (Column L), 20-day lead time reorder logic, and daily alerts.",
+    "dept": "Operations",
+    "status": "live",
+    "priority": "critical",
+    "version": "v2.0",
+    "date": "2026-04-01",
+    "versions": [
+      { "v": "v1.0", "date": "2026-03-01", "notes": "Basic inventory tracking in Google Sheets. Manual stock level monitoring." },
+      { "v": "v1.5", "date": "2026-03-20", "notes": "Added True Demand column (L). Filters out returned/cancelled orders for accurate demand." },
+      { "v": "v2.0", "date": "2026-04-01", "notes": "20-day lead time reorder logic. Daily automated alerts when stock drops below threshold." }
+    ]
+  },
+  {
+    "id": "sys_5",
+    "name": "Customer support IP & call tracking",
+    "desc": "IP number system with call recording, duration, and timestamp logging. No prior tracking existed.",
+    "dept": "Customer Support",
+    "status": "live",
+    "priority": "high",
+    "version": "v1.0",
+    "date": "2026-05-10",
+    "versions": [
+      { "v": "v1.0", "date": "2026-05-10", "notes": "Full call tracking launched. Logs IP, duration, timestamp, agent. Dashboard for support managers." }
+    ]
+  },
+  {
+    "id": "sys_6",
+    "name": "WhatsApp marketing integration",
+    "desc": "WhatsApp Business API integration for broadcast campaigns and order notifications.",
+    "dept": "Marketing",
+    "status": "progress",
+    "priority": "high",
+    "version": "v0.2",
+    "date": "2026-04-15",
+    "versions": [
+      { "v": "v0.1", "date": "2026-04-01", "notes": "WhatsApp Business API connected. Basic message sending confirmed." },
+      { "v": "v0.2", "date": "2026-04-15", "notes": "Broadcast template approved. Order notification trigger wired to OMS." }
+    ]
+  },
+  {
+    "id": "sys_7",
+    "name": "OMS to Zoho Books sync",
+    "desc": "Sales order automation from order management system into Zoho Books.",
+    "dept": "Technology & Infrastructure",
+    "status": "progress",
+    "priority": "critical",
+    "version": "v0.3",
+    "date": "2026-04-20",
+    "versions": [
+      { "v": "v0.1", "date": "2026-04-01", "notes": "Nuport API integration. Order fetch working." },
+      { "v": "v0.2", "date": "2026-04-10", "notes": "Zoho Books sales order creation mapped. Line items syncing." },
+      { "v": "v0.3", "date": "2026-04-20", "notes": "Partial delivery and exchange flows added. Error logging in place." }
+    ]
+  },
+  {
+    "id": "sys_8",
+    "name": "Meta Ads MCP connector",
+    "desc": "Direct Meta Ads account connection to Claude for natural language campaign management.",
+    "dept": "Marketing",
+    "status": "planned",
+    "priority": "high",
+    "version": "—",
+    "date": "—",
+    "versions": []
+  },
+  {
+    "id": "sys_9",
+    "name": "WooCommerce MCP connector",
+    "desc": "AI-native access to WooCommerce store for product, order, and inventory management via Claude.",
+    "dept": "Technology & Infrastructure",
+    "status": "planned",
+    "priority": "medium",
+    "version": "—",
+    "date": "—",
+    "versions": []
+  }
+]
