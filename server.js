@@ -4,6 +4,7 @@ const fetch = require('node-fetch');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -425,6 +426,49 @@ app.post('/api/batch/process', upload.single('csv'), async (req, res) => {
   } catch (e) {
     send({ type: 'error', message: e.message });
     res.end();
+  }
+});
+
+// ── System Registry ─────────────────────────────────────────
+const REGISTRY_FILE = path.join(__dirname, 'registry-data.json');
+
+const DEFAULT_SYSTEMS = [
+  { id:'sys_1', name:'Invoice automation', desc:'Reconciliation with Pathao invoice. Automated invoice creation and matching in Zoho Books.', dept:'Finance & Accounting', status:'progress', priority:'critical', version:'v0.1', date:'2026-05-10' },
+  { id:'sys_2', name:'Expense automation', desc:'Automated expense logging and categorization in Zoho Books.', dept:'Finance & Accounting', status:'live', priority:'critical', version:'v1.0', date:'2026-05-10' },
+  { id:'sys_3', name:'Master finance dashboard', desc:'Unified financial KPI dashboard integrating Zoho Books and Google Sheets with Looker Studio.', dept:'Finance & Accounting', status:'live', priority:'critical', version:'v1.0', date:'2026-05-10' },
+  { id:'sys_4', name:'Inventory management supertool', desc:'Google Sheets/Zoho system with True Demand tracking (Column L), 20-day lead time reorder logic, and daily alerts.', dept:'Operations', status:'live', priority:'critical', version:'v2.0', date:'2026-04-01' },
+  { id:'sys_5', name:'Customer support IP & call tracking', desc:'IP number system with call recording, duration, and timestamp logging. No prior tracking existed.', dept:'Customer Support', status:'live', priority:'high', version:'v1.0', date:'2026-05-10' },
+  { id:'sys_6', name:'WhatsApp marketing integration', desc:'WhatsApp Business API integration for broadcast campaigns and order notifications.', dept:'Marketing', status:'progress', priority:'high', version:'v0.2', date:'2026-04-15' },
+  { id:'sys_7', name:'OMS to Zoho Books sync', desc:'Sales order automation from order management system into Zoho Books.', dept:'Technology & Infrastructure', status:'progress', priority:'critical', version:'v0.3', date:'2026-04-20' },
+  { id:'sys_8', name:'Meta Ads MCP connector', desc:'Direct Meta Ads account connection to Claude for natural language campaign management.', dept:'Marketing', status:'planned', priority:'high', version:'—', date:'—' },
+  { id:'sys_9', name:'WooCommerce MCP connector', desc:'AI-native access to WooCommerce store for product, order, and inventory management via Claude.', dept:'Technology & Infrastructure', status:'planned', priority:'medium', version:'—', date:'—' },
+];
+
+function readRegistry() {
+  try {
+    if (fs.existsSync(REGISTRY_FILE)) {
+      return JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return DEFAULT_SYSTEMS;
+}
+
+function writeRegistry(data) {
+  fs.writeFileSync(REGISTRY_FILE, JSON.stringify(data, null, 2));
+}
+
+app.get('/api/registry', (req, res) => {
+  res.json(readRegistry());
+});
+
+app.post('/api/registry', (req, res) => {
+  try {
+    const data = req.body;
+    if (!Array.isArray(data)) return res.status(400).json({ error: 'Expected array' });
+    writeRegistry(data);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
