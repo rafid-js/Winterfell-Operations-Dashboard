@@ -4,254 +4,256 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>System Registry — Winterfell Ops</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0a0a0a;
-    --surface: #111111;
-    --surface2: #1a1a1a;
-    --border: #2a2a2a;
-    --text: #f0f0f0;
-    --muted: #888;
-    --accent: #c8a96e;
-    --live: #4caf7d;
-    --progress: #e0a94b;
-    --planned: #5b9cf6;
-    --paused: #888;
-    --critical: #e05252;
-    --high: #e0a94b;
-    --medium: #5b9cf6;
-    --low: #888;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#080c14; --surface:#0e1420; --surface2:#141c2e; --border:#1a2640;
+  --accent:#00e5b0; --accent2:#0cf; --warn:#ffb830; --danger:#ff4d6a;
+  --green:#00e5a0; --text:#dde6f5; --muted:#4a5a7a; --sidebar:220px;
+}
+body { background:var(--bg); color:var(--text); font-family:'Syne',sans-serif; min-height:100vh; display:flex; }
 
-  /* Sidebar */
-  .sidebar {
-    position: fixed; top: 0; left: 0; width: 220px; height: 100vh;
-    background: var(--surface); border-right: 1px solid var(--border);
-    display: flex; flex-direction: column; padding: 0; z-index: 100;
-  }
-  .sidebar-brand {
-    padding: 20px 20px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px; font-weight: 700; letter-spacing: .15em;
-    text-transform: uppercase; color: var(--accent);
-  }
-  .sidebar-brand span { display: block; font-size: 10px; font-weight: 400; color: var(--muted); letter-spacing: .05em; margin-top: 2px; }
-  .nav-section { padding: 12px 12px 4px; font-size: 10px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
-  .nav-link {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 16px; font-size: 13px; color: var(--muted);
-    text-decoration: none; border-radius: 6px; margin: 1px 8px;
-    transition: all .15s;
-  }
-  .nav-link:hover { background: var(--surface2); color: var(--text); }
-  .nav-link.active { background: var(--surface2); color: var(--accent); }
-  .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+/* ── Sidebar ── */
+.sidebar { width:var(--sidebar); min-height:100vh; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; position:fixed; top:0; left:0; bottom:0; z-index:100; }
+.sidebar-logo { padding:24px 20px 20px; border-bottom:1px solid var(--border); }
+.logo-mark { font-size:11px; font-weight:800; letter-spacing:3px; text-transform:uppercase; color:var(--accent); font-family:'JetBrains Mono',monospace; }
+.logo-sub { font-size:10px; color:var(--muted); margin-top:3px; letter-spacing:1px; text-transform:uppercase; }
+.sidebar-nav { flex:1; padding:16px 12px; display:flex; flex-direction:column; gap:4px; }
+.nav-section { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:var(--muted); padding:12px 8px 6px; font-family:'JetBrains Mono',monospace; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; font-size:13px; font-weight:600; color:var(--muted); transition:all .15s; border:1px solid transparent; text-decoration:none; }
+.nav-item:hover { background:var(--surface2); color:var(--text); }
+.nav-item.active { background:rgba(0,229,176,.1); color:var(--accent); border-color:rgba(0,229,176,.2); }
+.nav-icon { font-size:16px; width:20px; text-align:center; }
+.sidebar-footer { padding:16px; border-top:1px solid var(--border); font-size:10px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+.status-dot { display:inline-block; width:6px; height:6px; background:var(--accent); border-radius:50%; margin-right:6px; animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-  /* Main */
-  .main { margin-left: 220px; padding: 32px 36px; min-height: 100vh; }
-  .page-header { margin-bottom: 28px; }
-  .page-header h1 { font-size: 22px; font-weight: 600; color: var(--text); }
-  .page-header p { font-size: 13px; color: var(--muted); margin-top: 4px; }
+/* ── Main ── */
+.main { margin-left:var(--sidebar); flex:1; min-height:100vh; padding:32px 40px; }
+.content-wrap { max-width:1060px; margin:0 auto; }
 
-  /* Stats */
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
-  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
-  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
-  .stat-value { font-size: 26px; font-weight: 600; }
+/* ── Page header ── */
+.page-header { margin-bottom:28px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.page-title { font-size:26px; font-weight:800; letter-spacing:-.5px; }
+.page-subtitle { font-size:13px; color:var(--muted); margin-top:6px; }
+.add-btn { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding:10px 18px; border-radius:10px; border:1px solid rgba(0,229,176,.4); background:rgba(0,229,176,.07); color:var(--accent); cursor:pointer; font-weight:700; font-family:'Syne',sans-serif; transition:all .2s; white-space:nowrap; flex-shrink:0; align-self:flex-start; }
+.add-btn:hover { background:rgba(0,229,176,.14); border-color:var(--accent); }
 
-  /* Toolbar */
-  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-  .filters { display: flex; gap: 6px; flex-wrap: wrap; }
-  .filter-btn {
-    font-size: 12px; padding: 5px 14px; border-radius: 20px;
-    border: 1px solid var(--border); background: transparent;
-    color: var(--muted); cursor: pointer; transition: all .15s;
-  }
-  .filter-btn:hover { border-color: var(--accent); color: var(--text); }
-  .filter-btn.active { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
-  .add-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-size: 13px; padding: 8px 16px; border-radius: 8px;
-    border: 1px solid var(--accent); background: transparent;
-    color: var(--accent); cursor: pointer; transition: all .15s; font-weight: 500;
-  }
-  .add-btn:hover { background: var(--accent); color: #000; }
+/* ── Stats ── */
+.stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:24px; }
+.stat-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; text-align:center; }
+.stat-val { font-size:26px; font-weight:800; font-family:'JetBrains Mono',monospace; }
+.stat-label { font-size:10px; color:var(--muted); margin-top:4px; text-transform:uppercase; letter-spacing:.8px; font-family:'JetBrains Mono',monospace; }
 
-  /* Department sections */
-  .dept-section { margin-bottom: 28px; }
-  .dept-header {
-    display: flex; align-items: center; gap: 10px;
-    margin-bottom: 12px; padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  .dept-icon { font-size: 16px; }
-  .dept-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
-  .dept-count {
-    font-size: 11px; background: var(--surface2); border: 1px solid var(--border);
-    padding: 1px 8px; border-radius: 10px; color: var(--muted);
-  }
+/* ── Filters ── */
+.filters-bar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px; }
+.filter-btn { font-size:12px; padding:6px 14px; border-radius:20px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; transition:all .15s; font-family:'Syne',sans-serif; font-weight:600; }
+.filter-btn:hover { border-color:var(--accent); color:var(--text); }
+.filter-btn.active { background:rgba(0,229,176,.1); color:var(--accent); border-color:rgba(0,229,176,.3); }
 
-  /* System cards */
-  .cards-grid { display: flex; flex-direction: column; gap: 8px; }
-  .system-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px 18px;
-    display: grid; grid-template-columns: 1fr auto;
-    gap: 12px; align-items: start; transition: border-color .15s;
-  }
-  .system-card:hover { border-color: #3a3a3a; }
-  .sys-name { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
-  .sys-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
-  .sys-meta { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-  .badge { font-size: 11px; padding: 2px 9px; border-radius: 20px; font-weight: 500; }
-  .badge-live { background: rgba(76,175,125,.15); color: var(--live); border: 1px solid rgba(76,175,125,.3); }
-  .badge-progress { background: rgba(224,169,75,.15); color: var(--progress); border: 1px solid rgba(224,169,75,.3); }
-  .badge-planned { background: rgba(91,156,246,.15); color: var(--planned); border: 1px solid rgba(91,156,246,.3); }
-  .badge-paused { background: rgba(136,136,136,.15); color: var(--paused); border: 1px solid rgba(136,136,136,.2); }
-  .priority-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-  .p-critical { background: var(--critical); }
-  .p-high { background: var(--high); }
-  .p-medium { background: var(--medium); }
-  .p-low { background: var(--low); }
-  .meta-text { font-size: 11px; color: var(--muted); }
-  .sys-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-  .edit-btn {
-    font-size: 11px; padding: 4px 10px; border-radius: 6px;
-    border: 1px solid var(--border); background: transparent;
-    color: var(--muted); cursor: pointer; transition: all .15s;
-  }
-  .edit-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* ── Department sections ── */
+.dept-section { margin-bottom:28px; }
+.dept-header { display:flex; align-items:center; gap:10px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.dept-label { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.12em; font-family:'JetBrains Mono',monospace; }
+.dept-count { font-size:11px; background:var(--surface2); border:1px solid var(--border); padding:2px 8px; border-radius:10px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
 
-  /* Modal */
-  .modal-overlay {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,.7); z-index: 200;
-    align-items: center; justify-content: center;
-  }
-  .modal-overlay.open { display: flex; }
-  .modal {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 14px; padding: 28px; width: 460px; max-width: 95vw;
-  }
-  .modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 20px; color: var(--text); }
-  .field { margin-bottom: 14px; }
-  .field label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
-  .field input, .field select, .field textarea {
-    width: 100%; font-size: 13px; padding: 9px 12px;
-    border-radius: 8px; border: 1px solid var(--border);
-    background: var(--surface2); color: var(--text); outline: none;
-    transition: border-color .15s;
-  }
-  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
-  .field textarea { height: 75px; resize: vertical; }
-  .field select option { background: var(--surface2); }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; align-items: center; }
-  .btn-save {
-    font-size: 13px; padding: 8px 20px; border-radius: 8px;
-    border: none; background: var(--accent); color: #000;
-    cursor: pointer; font-weight: 600;
-  }
-  .btn-save:hover { opacity: .9; }
-  .btn-cancel {
-    font-size: 13px; padding: 8px 16px; border-radius: 8px;
-    border: 1px solid var(--border); background: transparent;
-    color: var(--muted); cursor: pointer;
-  }
-  .btn-delete {
-    font-size: 13px; padding: 8px 16px; border-radius: 8px;
-    border: none; background: rgba(224,82,82,.15);
-    color: var(--critical); cursor: pointer; margin-right: auto;
-    border: 1px solid rgba(224,82,82,.3);
-  }
-  .btn-delete:hover { background: rgba(224,82,82,.25); }
-  .save-toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 16px; font-size: 13px;
-    color: var(--live); opacity: 0; transition: opacity .3s; z-index: 300;
-    pointer-events: none;
-  }
-  .save-toast.show { opacity: 1; }
-  .empty { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
-  .loading { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
-  #saveIndicator { font-size: 12px; color: var(--muted); margin-left: 10px; }
+/* ── System cards ── */
+.system-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px 20px; margin-bottom:8px; transition:border-color .15s; }
+.system-card:hover { border-color:rgba(0,229,176,.18); }
+.card-main { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:start; }
+.sys-name { font-size:14px; font-weight:700; color:var(--text); margin-bottom:4px; }
+.sys-desc { font-size:12px; color:var(--muted); line-height:1.6; }
+.sys-meta { display:flex; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap; }
+.badge { display:inline-block; font-size:11px; padding:3px 9px; border-radius:20px; font-weight:700; font-family:'JetBrains Mono',monospace; }
+.badge-live { background:rgba(0,229,160,.12); color:var(--green); border:1px solid rgba(0,229,160,.25); }
+.badge-progress { background:rgba(255,184,48,.12); color:var(--warn); border:1px solid rgba(255,184,48,.25); }
+.badge-planned { background:rgba(0,204,255,.12); color:var(--accent2); border:1px solid rgba(0,204,255,.25); }
+.badge-paused { background:rgba(74,90,122,.2); color:var(--muted); border:1px solid rgba(74,90,122,.3); }
+.priority-dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex-shrink:0; }
+.p-critical { background:var(--danger); box-shadow:0 0 6px rgba(255,77,106,.4); }
+.p-high { background:var(--warn); }
+.p-medium { background:var(--accent2); }
+.p-low { background:var(--muted); }
+.meta-text { font-size:11px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+.ver-tag { font-size:11px; color:var(--accent); background:rgba(0,229,176,.08); border:1px solid rgba(0,229,176,.2); padding:2px 8px; border-radius:20px; font-family:'JetBrains Mono',monospace; font-weight:500; }
+
+.sys-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; min-width:80px; flex-shrink:0; }
+.date-text { font-size:11px; color:var(--muted); font-family:'JetBrains Mono',monospace; text-align:right; }
+.sys-btns { display:flex; gap:6px; }
+.edit-btn { font-size:11px; padding:5px 12px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; transition:all .15s; font-family:'Syne',sans-serif; font-weight:600; }
+.edit-btn:hover { border-color:var(--accent); color:var(--accent); }
+.hist-btn { font-size:11px; padding:5px 10px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; transition:all .15s; font-family:'JetBrains Mono',monospace; }
+.hist-btn:hover { border-color:var(--accent2); color:var(--accent2); }
+.hist-btn.open { border-color:rgba(0,204,255,.3); color:var(--accent2); background:rgba(0,204,255,.07); }
+
+/* ── Version history (inline) ── */
+.version-history { margin-top:12px; border-top:1px solid var(--border); padding-top:12px; display:none; }
+.version-history.open { display:block; }
+.ver-table { width:100%; }
+.ver-head { display:grid; grid-template-columns:70px 100px 1fr; gap:8px; margin-bottom:6px; }
+.ver-head-label { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+.ver-row { display:grid; grid-template-columns:70px 100px 1fr; gap:8px; padding:7px 0; border-bottom:1px solid rgba(26,38,64,.5); align-items:start; }
+.ver-row:last-child { border-bottom:none; }
+.ver-v { font-size:12px; font-family:'JetBrains Mono',monospace; color:var(--accent); font-weight:600; }
+.ver-d { font-size:11px; font-family:'JetBrains Mono',monospace; color:var(--muted); }
+.ver-n { font-size:12px; color:var(--text); line-height:1.5; }
+
+/* ── Modal ── */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:200; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto; }
+.modal-title { font-size:16px; font-weight:800; margin-bottom:18px; color:var(--text); }
+
+.modal-tabs { display:flex; gap:6px; margin-bottom:20px; }
+.mtab { font-size:12px; font-weight:700; padding:6px 16px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; font-family:'Syne',sans-serif; transition:all .15s; }
+.mtab.active { border-color:rgba(0,229,176,.3); color:var(--accent); background:rgba(0,229,176,.08); }
+.tab-pane { display:none; }
+.tab-pane.active { display:block; }
+
+.field { margin-bottom:14px; }
+.field label { display:block; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin-bottom:6px; font-family:'JetBrains Mono',monospace; }
+.field input, .field select, .field textarea { width:100%; font-size:13px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); outline:none; transition:border-color .2s; font-family:'Syne',sans-serif; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color:var(--accent); }
+.field textarea { height:72px; resize:vertical; }
+.field select option { background:var(--surface2); }
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+/* Version entries in modal */
+.ver-entries-wrap { margin-bottom:12px; }
+.ver-col-heads { display:grid; grid-template-columns:80px 110px 1fr 28px; gap:8px; margin-bottom:6px; padding:0 2px; }
+.ver-col-head { font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+.ver-entry { display:grid; grid-template-columns:80px 110px 1fr 28px; gap:8px; align-items:start; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px; }
+.ve-input { font-size:12px; padding:6px 8px; border-radius:7px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:'JetBrains Mono',monospace; outline:none; width:100%; transition:border-color .2s; }
+.ve-input:focus { border-color:var(--accent); }
+.ve-textarea { font-size:12px; padding:6px 8px; border-radius:7px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:'Syne',sans-serif; outline:none; width:100%; resize:vertical; height:52px; transition:border-color .2s; }
+.ve-textarea:focus { border-color:var(--accent); }
+.remove-ver { width:28px; height:28px; border-radius:6px; border:1px solid rgba(255,77,106,.3); background:rgba(255,77,106,.08); color:var(--danger); cursor:pointer; font-size:13px; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all .15s; }
+.remove-ver:hover { background:rgba(255,77,106,.2); }
+.add-ver-btn { width:100%; font-size:12px; padding:8px; border-radius:8px; border:1px dashed rgba(0,229,176,.3); background:transparent; color:var(--accent); cursor:pointer; font-family:'Syne',sans-serif; font-weight:700; transition:all .15s; margin-top:4px; }
+.add-ver-btn:hover { background:rgba(0,229,176,.07); border-style:solid; }
+.ver-hint { font-size:11px; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-bottom:14px; line-height:1.6; }
+
+.modal-actions { display:flex; gap:8px; justify-content:flex-end; align-items:center; margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
+.btn-save { font-size:13px; padding:10px 22px; border-radius:10px; border:none; background:var(--accent); color:#080c14; cursor:pointer; font-weight:800; font-family:'Syne',sans-serif; transition:all .2s; }
+.btn-save:hover { background:#00ffca; transform:translateY(-1px); }
+.btn-cancel { font-size:13px; padding:10px 16px; border-radius:10px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; font-family:'Syne',sans-serif; font-weight:600; transition:all .15s; }
+.btn-cancel:hover { border-color:var(--text); color:var(--text); }
+.btn-delete { font-size:13px; padding:10px 16px; border-radius:10px; border:1px solid rgba(255,77,106,.3); background:rgba(255,77,106,.1); color:var(--danger); cursor:pointer; margin-right:auto; font-family:'Syne',sans-serif; font-weight:700; transition:all .15s; }
+.btn-delete:hover { background:rgba(255,77,106,.2); }
+
+.save-toast { position:fixed; bottom:24px; right:24px; background:var(--surface); border:1px solid rgba(0,229,176,.3); border-radius:10px; padding:10px 18px; font-size:13px; color:var(--green); opacity:0; transition:opacity .3s; z-index:300; pointer-events:none; font-family:'JetBrains Mono',monospace; box-shadow:0 4px 24px rgba(0,0,0,.4); }
+.save-toast.show { opacity:1; }
+.empty { text-align:center; padding:48px; color:var(--muted); font-size:13px; font-family:'JetBrains Mono',monospace; }
+.loading { text-align:center; padding:48px; color:var(--muted); font-size:13px; font-family:'JetBrains Mono',monospace; }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
-  <div class="sidebar-brand">WINTERFELL<span>Operations Dashboard</span></div>
-  <div class="nav-section">Finance</div>
-  <a href="/" class="nav-link"><span class="nav-icon">⚡</span> Batch Payments</a>
-  <a href="/" class="nav-link"><span class="nav-icon">📋</span> Create Invoice</a>
-  <a href="/" class="nav-link"><span class="nav-icon">🔧</span> Partial Orders</a>
-  <a href="/reconciliation.html" class="nav-link"><span class="nav-icon">🔄</span> Reconciliation</a>
-  <div class="nav-section">Management</div>
-  <a href="/registry.html" class="nav-link active"><span class="nav-icon">🗂️</span> System Registry</a>
-</div>
-
-<div class="main">
-  <div class="page-header">
-    <h1>System Registry <span id="saveIndicator"></span></h1>
-    <p>Version control for every operational system being built at Winterfell.</p>
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">Winterfell</div>
+    <div class="logo-sub">Operations</div>
   </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">Finance</div>
+    <a class="nav-item" href="/"><span class="nav-icon">⚡</span> Batch Payments</a>
+    <div class="nav-section">Orders</div>
+    <a class="nav-item" href="/"><span class="nav-icon">📋</span> Create Invoice</a>
+    <a class="nav-item" href="/"><span class="nav-icon">🔧</span> Partial Orders</a>
+    <a class="nav-item" href="/reconciliation.html" target="_blank"><span class="nav-icon">🔄</span> Reconciliation ↗</a>
+    <div class="nav-section">Management</div>
+    <a class="nav-item active" href="/registry.html"><span class="nav-icon">🗂</span> System Registry</a>
+  </nav>
+  <div class="sidebar-footer"><span class="status-dot"></span>Connected</div>
+</aside>
 
-  <div class="stats" id="stats"></div>
+<main class="main">
+  <div class="content-wrap">
 
-  <div class="toolbar">
-    <div class="filters" id="filters">
+    <div class="page-header">
+      <div>
+        <div class="page-title">🗂 System Registry</div>
+        <div class="page-subtitle">Version history and status tracking for every system being built at Winterfell</div>
+      </div>
+      <button class="add-btn" onclick="openModal()">+ Add system</button>
+    </div>
+
+    <div class="stats-row" id="statsRow"></div>
+
+    <div class="filters-bar" id="filtersBar">
       <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
       <button class="filter-btn" onclick="setFilter('live',this)">Live</button>
       <button class="filter-btn" onclick="setFilter('progress',this)">In progress</button>
       <button class="filter-btn" onclick="setFilter('planned',this)">Planned</button>
       <button class="filter-btn" onclick="setFilter('paused',this)">Paused</button>
     </div>
-    <button class="add-btn" onclick="openModal()">+ Add system</button>
-  </div>
 
-  <div id="board"><div class="loading">Loading systems...</div></div>
-</div>
+    <div id="board"><div class="loading">Loading systems...</div></div>
+
+  </div>
+</main>
 
 <!-- Modal -->
 <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
-  <div class="modal">
-    <h3 id="modalTitle">Add system</h3>
-    <div class="field"><label>System name</label><input id="fName" placeholder="e.g. Invoice automation"></div>
-    <div class="field"><label>Description</label><textarea id="fDesc" placeholder="What does this system do?"></textarea></div>
-    <div class="field"><label>Department</label>
-      <select id="fDept">
-        <option>Finance & Accounting</option>
-        <option>Operations</option>
-        <option>Marketing</option>
-        <option>Customer Support</option>
-        <option>Technology & Infrastructure</option>
-      </select>
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title" id="modalTitle">Add system</div>
+
+    <div class="modal-tabs">
+      <button class="mtab active" onclick="switchTab('details',this)">Details</button>
+      <button class="mtab" onclick="switchTab('versions',this)">Version History</button>
     </div>
-    <div class="two-col">
-      <div class="field"><label>Status</label>
-        <select id="fStatus">
-          <option value="live">Live</option>
-          <option value="progress">In progress</option>
-          <option value="planned">Planned</option>
-          <option value="paused">Paused</option>
+
+    <!-- Details tab -->
+    <div class="tab-pane active" id="tabDetails">
+      <div class="field"><label>System name</label><input id="fName" placeholder="e.g. Invoice automation"></div>
+      <div class="field"><label>Description</label><textarea id="fDesc" placeholder="What does this system do?"></textarea></div>
+      <div class="field"><label>Department</label>
+        <select id="fDept">
+          <option>Finance &amp; Accounting</option>
+          <option>Operations</option>
+          <option>Marketing</option>
+          <option>Customer Support</option>
+          <option>Technology &amp; Infrastructure</option>
         </select>
       </div>
-      <div class="field"><label>Priority</label>
-        <select id="fPriority">
-          <option value="critical">Critical</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
+      <div class="two-col">
+        <div class="field"><label>Status</label>
+          <select id="fStatus">
+            <option value="live">Live</option>
+            <option value="progress">In progress</option>
+            <option value="planned">Planned</option>
+            <option value="paused">Paused</option>
+          </select>
+        </div>
+        <div class="field"><label>Priority</label>
+          <select id="fPriority">
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="field"><label>Current version</label><input id="fVersion" placeholder="v1.0"></div>
+        <div class="field"><label>Date</label><input id="fDate" type="date"></div>
       </div>
     </div>
-    <div class="two-col">
-      <div class="field"><label>Version</label><input id="fVersion" placeholder="v1.0"></div>
-      <div class="field"><label>Date</label><input id="fDate" type="date"></div>
+
+    <!-- Version history tab -->
+    <div class="tab-pane" id="tabVersions">
+      <p class="ver-hint">Each entry is a released version. Add a new row when you ship an update. Most recent first.</p>
+      <div class="ver-col-heads">
+        <span class="ver-col-head">Version</span>
+        <span class="ver-col-head">Date</span>
+        <span class="ver-col-head">Notes</span>
+        <span></span>
+      </div>
+      <div class="ver-entries-wrap" id="verEntries"></div>
+      <button class="add-ver-btn" onclick="addVerEntry()">+ Add version entry</button>
     </div>
+
     <div class="modal-actions">
       <button class="btn-delete" id="deleteBtn" onclick="deleteSystem()" style="display:none">Delete</button>
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -265,167 +267,247 @@
 <script>
 const DEPTS = ['Finance & Accounting','Operations','Marketing','Customer Support','Technology & Infrastructure'];
 const DEPT_ICONS = {
-  'Finance & Accounting':'💰',
-  'Operations':'⚙️',
-  'Marketing':'📣',
-  'Customer Support':'🎧',
-  'Technology & Infrastructure':'🖥️'
+  'Finance & Accounting': '💰',
+  'Operations': '⚙️',
+  'Marketing': '📣',
+  'Customer Support': '🎧',
+  'Technology & Infrastructure': '🖥️'
 };
 
 let systems = [];
 let editingId = null;
 let activeFilter = 'all';
+let activeTab = 'details';
 
-function statusLabel(s){return{live:'Live',progress:'In progress',planned:'Planned',paused:'Paused'}[s]||s}
-function statusClass(s){return{live:'badge-live',progress:'badge-progress',planned:'badge-planned',paused:'badge-paused'}[s]||'badge-paused'}
-function priorityClass(p){return{critical:'p-critical',high:'p-high',medium:'p-medium',low:'p-low'}[p]||'p-low'}
+function statusLabel(s) { return {live:'Live',progress:'In progress',planned:'Planned',paused:'Paused'}[s] || s; }
+function statusClass(s) { return {live:'badge-live',progress:'badge-progress',planned:'badge-planned',paused:'badge-paused'}[s] || 'badge-paused'; }
+function priorityClass(p) { return {critical:'p-critical',high:'p-high',medium:'p-medium',low:'p-low'}[p] || 'p-low'; }
 
-async function loadSystems(){
+async function loadSystems() {
   try {
     const res = await fetch('/api/registry');
     systems = await res.json();
-  } catch(e){
+    systems = systems.map(s => ({ versions: [], ...s }));
+  } catch(e) {
     systems = [];
   }
   render();
 }
 
-async function persistSystems(){
+async function persistSystems() {
   try {
-    document.getElementById('saveIndicator').textContent = 'Saving...';
     const res = await fetch('/api/registry', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(systems)
     });
-    if(!res.ok) throw new Error('Failed');
-    document.getElementById('saveIndicator').textContent = '';
+    if (!res.ok) throw new Error('Failed');
     showToast();
-  } catch(e){
-    document.getElementById('saveIndicator').textContent = '⚠ Save failed';
+  } catch(e) {
+    alert('Save failed. Check your connection.');
   }
 }
 
-function showToast(){
+function showToast() {
   const t = document.getElementById('toast');
   t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2000);
+  setTimeout(() => t.classList.remove('show'), 2000);
 }
 
-function renderStats(){
-  const live=systems.filter(s=>s.status==='live').length;
-  const prog=systems.filter(s=>s.status==='progress').length;
-  const plan=systems.filter(s=>s.status==='planned').length;
-  const crit=systems.filter(s=>s.priority==='critical').length;
-  document.getElementById('stats').innerHTML=`
-    <div class="stat"><div class="stat-label">Total systems</div><div class="stat-value" style="color:var(--text)">${systems.length}</div></div>
-    <div class="stat"><div class="stat-label">Live</div><div class="stat-value" style="color:var(--live)">${live}</div></div>
-    <div class="stat"><div class="stat-label">In progress</div><div class="stat-value" style="color:var(--progress)">${prog}</div></div>
-    <div class="stat"><div class="stat-label">Critical</div><div class="stat-value" style="color:var(--critical)">${crit}</div></div>
+function renderStats() {
+  const live = systems.filter(s => s.status === 'live').length;
+  const prog = systems.filter(s => s.status === 'progress').length;
+  const plan = systems.filter(s => s.status === 'planned').length;
+  const crit = systems.filter(s => s.priority === 'critical').length;
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat-card"><div class="stat-val" style="color:var(--text)">${systems.length}</div><div class="stat-label">Total</div></div>
+    <div class="stat-card"><div class="stat-val" style="color:var(--green)">${live}</div><div class="stat-label">Live</div></div>
+    <div class="stat-card"><div class="stat-val" style="color:var(--warn)">${prog}</div><div class="stat-label">In progress</div></div>
+    <div class="stat-card"><div class="stat-val" style="color:var(--danger)">${crit}</div><div class="stat-label">Critical</div></div>
   `;
 }
 
-function renderBoard(){
-  const filtered = activeFilter==='all' ? systems : systems.filter(s=>s.status===activeFilter);
+function renderBoard() {
+  const filtered = activeFilter === 'all' ? systems : systems.filter(s => s.status === activeFilter);
   const board = document.getElementById('board');
-  if(!filtered.length){board.innerHTML='<div class="empty">No systems match this filter.</div>';return;}
-  let html='';
-  DEPTS.forEach(dept=>{
-    const items=filtered.filter(s=>s.dept===dept);
-    if(!items.length)return;
-    html+=`<div class="dept-section">
+  if (!filtered.length) { board.innerHTML = '<div class="empty">No systems match this filter.</div>'; return; }
+
+  let html = '';
+  DEPTS.forEach(dept => {
+    const items = filtered.filter(s => s.dept === dept);
+    if (!items.length) return;
+    html += `<div class="dept-section">
       <div class="dept-header">
-        <span class="dept-icon">${DEPT_ICONS[dept]}</span>
+        <span style="font-size:15px">${DEPT_ICONS[dept]}</span>
         <span class="dept-label">${dept}</span>
         <span class="dept-count">${items.length}</span>
-      </div>
-      <div class="cards-grid">`;
-    items.forEach(s=>{
-      html+=`<div class="system-card">
-        <div>
-          <div class="sys-name">${s.name}</div>
-          <div class="sys-desc">${s.desc||''}</div>
-          <div class="sys-meta">
-            <span class="badge ${statusClass(s.status)}">${statusLabel(s.status)}</span>
-            <span class="priority-dot ${priorityClass(s.priority)}"></span>
-            <span class="meta-text">${s.priority} priority</span>
-            ${s.version&&s.version!=='—'?`<span class="meta-text">${s.version}</span>`:''}
+      </div>`;
+    items.forEach(s => {
+      const hasHistory = s.versions && s.versions.length > 0;
+      const verRows = hasHistory ? s.versions.map(v => `
+        <div class="ver-row">
+          <span class="ver-v">${escHtml(v.v || '—')}</span>
+          <span class="ver-d">${escHtml(v.date || '—')}</span>
+          <span class="ver-n">${escHtml(v.notes || '')}</span>
+        </div>`).join('') : '<div class="ver-row"><span class="meta-text">No version entries yet.</span></div>';
+
+      html += `<div class="system-card" id="card-${s.id}">
+        <div class="card-main">
+          <div>
+            <div class="sys-name">${escHtml(s.name)}</div>
+            <div class="sys-desc">${escHtml(s.desc || '')}</div>
+            <div class="sys-meta">
+              <span class="badge ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+              <span class="priority-dot ${priorityClass(s.priority)}"></span>
+              <span class="meta-text">${s.priority} priority</span>
+              ${s.version && s.version !== '—' ? `<span class="ver-tag">${escHtml(s.version)}</span>` : ''}
+            </div>
+          </div>
+          <div class="sys-right">
+            <span class="date-text">${s.date && s.date !== '—' ? escHtml(s.date) : ''}</span>
+            <div class="sys-btns">
+              <button class="hist-btn" id="hbtn-${s.id}" onclick="toggleHistory('${s.id}')">History ${hasHistory ? '(' + s.versions.length + ')' : ''}</button>
+              <button class="edit-btn" onclick="openModal('${s.id}')">Edit</button>
+            </div>
           </div>
         </div>
-        <div class="sys-right">
-          <span class="meta-text">${s.date||''}</span>
-          <button class="edit-btn" onclick="openModal('${s.id}')">Edit</button>
+        <div class="version-history" id="hist-${s.id}">
+          <div class="ver-head">
+            <span class="ver-head-label">Version</span>
+            <span class="ver-head-label">Date</span>
+            <span class="ver-head-label">Notes</span>
+          </div>
+          <div class="ver-table">${verRows}</div>
         </div>
       </div>`;
     });
-    html+='</div></div>';
+    html += '</div>';
   });
-  board.innerHTML=html;
+  board.innerHTML = html;
 }
 
-function render(){renderStats();renderBoard();}
-function setFilter(f,btn){
-  activeFilter=f;
-  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toggleHistory(id) {
+  const panel = document.getElementById('hist-' + id);
+  const btn = document.getElementById('hbtn-' + id);
+  const isOpen = panel.classList.toggle('open');
+  btn.classList.toggle('open', isOpen);
+}
+
+function render() { renderStats(); renderBoard(); }
+
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderBoard();
 }
 
-function openModal(id){
-  editingId = id||null;
-  const overlay = document.getElementById('modalOverlay');
-  const deleteBtn = document.getElementById('deleteBtn');
-  if(id){
-    const s = systems.find(x=>x.id===id);
-    if(!s)return;
-    document.getElementById('modalTitle').textContent='Edit system';
-    document.getElementById('fName').value=s.name;
-    document.getElementById('fDesc').value=s.desc||'';
-    document.getElementById('fDept').value=s.dept;
-    document.getElementById('fStatus').value=s.status;
-    document.getElementById('fPriority').value=s.priority;
-    document.getElementById('fVersion').value=s.version==='—'?'':s.version||'';
-    document.getElementById('fDate').value=s.date==='—'?'':s.date||'';
-    deleteBtn.style.display='block';
+function switchTab(tab, btn) {
+  activeTab = tab;
+  document.querySelectorAll('.mtab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tabDetails').classList.toggle('active', tab === 'details');
+  document.getElementById('tabVersions').classList.toggle('active', tab === 'versions');
+}
+
+function openModal(id) {
+  editingId = id || null;
+  activeTab = 'details';
+  document.querySelectorAll('.mtab').forEach((b, i) => b.classList.toggle('active', i === 0));
+  document.getElementById('tabDetails').classList.add('active');
+  document.getElementById('tabVersions').classList.remove('active');
+
+  if (id) {
+    const s = systems.find(x => x.id === id);
+    if (!s) return;
+    document.getElementById('modalTitle').textContent = 'Edit system';
+    document.getElementById('fName').value = s.name;
+    document.getElementById('fDesc').value = s.desc || '';
+    document.getElementById('fDept').value = s.dept;
+    document.getElementById('fStatus').value = s.status;
+    document.getElementById('fPriority').value = s.priority;
+    document.getElementById('fVersion').value = s.version === '—' ? '' : (s.version || '');
+    document.getElementById('fDate').value = s.date === '—' ? '' : (s.date || '');
+    document.getElementById('deleteBtn').style.display = 'block';
+    renderVerEntries(s.versions || []);
   } else {
-    document.getElementById('modalTitle').textContent='Add system';
-    document.getElementById('fName').value='';
-    document.getElementById('fDesc').value='';
-    document.getElementById('fDept').value='Finance & Accounting';
-    document.getElementById('fStatus').value='planned';
-    document.getElementById('fPriority').value='medium';
-    document.getElementById('fVersion').value='';
-    document.getElementById('fDate').value=new Date().toISOString().split('T')[0];
-    deleteBtn.style.display='none';
+    document.getElementById('modalTitle').textContent = 'Add system';
+    document.getElementById('fName').value = '';
+    document.getElementById('fDesc').value = '';
+    document.getElementById('fDept').value = 'Finance & Accounting';
+    document.getElementById('fStatus').value = 'planned';
+    document.getElementById('fPriority').value = 'medium';
+    document.getElementById('fVersion').value = '';
+    document.getElementById('fDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('deleteBtn').style.display = 'none';
+    renderVerEntries([]);
   }
-  overlay.classList.add('open');
+  document.getElementById('modalOverlay').classList.add('open');
 }
 
-function closeModal(){
+function closeModal() {
   document.getElementById('modalOverlay').classList.remove('open');
-  editingId=null;
+  editingId = null;
 }
 
-function handleOverlayClick(e){
-  if(e.target===document.getElementById('modalOverlay'))closeModal();
+function handleOverlayClick(e) {
+  if (e.target === document.getElementById('modalOverlay')) closeModal();
 }
 
-async function saveSystem(){
-  const name=document.getElementById('fName').value.trim();
-  if(!name){alert('Please enter a system name.');return;}
-  const sys={
-    id: editingId || 'sys_'+Date.now(),
+function renderVerEntries(versions) {
+  const wrap = document.getElementById('verEntries');
+  wrap.innerHTML = '';
+  versions.forEach((v, i) => addVerEntry(v));
+}
+
+function addVerEntry(data) {
+  const wrap = document.getElementById('verEntries');
+  const idx = wrap.children.length;
+  const div = document.createElement('div');
+  div.className = 'ver-entry';
+  div.innerHTML = `
+    <input class="ve-input" placeholder="v1.0" value="${escHtml(data?.v || '')}">
+    <input class="ve-input" type="date" value="${escHtml(data?.date || '')}">
+    <textarea class="ve-textarea" placeholder="What changed in this version?">${escHtml(data?.notes || '')}</textarea>
+    <button class="remove-ver" onclick="this.closest('.ver-entry').remove()" title="Remove">×</button>`;
+  wrap.appendChild(div);
+}
+
+function collectVerEntries() {
+  const entries = [];
+  document.querySelectorAll('#verEntries .ver-entry').forEach(row => {
+    const inputs = row.querySelectorAll('.ve-input');
+    const ta = row.querySelector('.ve-textarea');
+    const v = inputs[0].value.trim();
+    const date = inputs[1].value;
+    const notes = ta.value.trim();
+    if (v || notes) entries.push({ v, date, notes });
+  });
+  return entries;
+}
+
+async function saveSystem() {
+  const name = document.getElementById('fName').value.trim();
+  if (!name) { alert('Please enter a system name.'); return; }
+  const versions = collectVerEntries();
+  const sys = {
+    id: editingId || 'sys_' + Date.now(),
     name,
-    desc:document.getElementById('fDesc').value.trim(),
-    dept:document.getElementById('fDept').value,
-    status:document.getElementById('fStatus').value,
-    priority:document.getElementById('fPriority').value,
-    version:document.getElementById('fVersion').value.trim()||'—',
-    date:document.getElementById('fDate').value||'—',
+    desc: document.getElementById('fDesc').value.trim(),
+    dept: document.getElementById('fDept').value,
+    status: document.getElementById('fStatus').value,
+    priority: document.getElementById('fPriority').value,
+    version: document.getElementById('fVersion').value.trim() || '—',
+    date: document.getElementById('fDate').value || '—',
+    versions,
   };
-  if(editingId){
-    const idx=systems.findIndex(x=>x.id===editingId);
-    systems[idx]=sys;
+  if (editingId) {
+    const idx = systems.findIndex(x => x.id === editingId);
+    systems[idx] = sys;
   } else {
     systems.push(sys);
   }
@@ -434,10 +516,10 @@ async function saveSystem(){
   render();
 }
 
-async function deleteSystem(){
-  if(!editingId)return;
-  if(!confirm('Delete this system? This cannot be undone.'))return;
-  systems=systems.filter(x=>x.id!==editingId);
+async function deleteSystem() {
+  if (!editingId) return;
+  if (!confirm('Delete this system? This cannot be undone.')) return;
+  systems = systems.filter(x => x.id !== editingId);
   await persistSystems();
   closeModal();
   render();
