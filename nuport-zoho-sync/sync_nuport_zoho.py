@@ -134,7 +134,7 @@ def fetch_nuport_inventory(config):
     """
     base = config["nuport_base_url"].rstrip("/")
     url = f"{base}/integration/inventory?page=-1"
-    headers = {"Authorization": config["nuport_api_key"]}
+    headers = {"Authorization": f"Bearer {config['nuport_api_key']}"}
 
     logging.info("Fetching all inventory from Nuport...")
     try:
