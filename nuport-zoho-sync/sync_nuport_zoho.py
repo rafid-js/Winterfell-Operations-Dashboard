@@ -114,8 +114,9 @@ def fetch_woocommerce_skus(config):
     base = f"{site}/wp-json/wc/v3"
     key = config["woo_consumer_key"]
     secret = config["woo_consumer_secret"]
-    creds = base64.b64encode(f"{key}:{secret}".encode()).decode()
-    headers = {"Authorization": f"Basic {creds}"}
+    # Pass credentials as query params to avoid Cloudflare blocking Authorization headers
+    auth_params = f"consumer_key={key}&consumer_secret={secret}"
+    headers = {"User-Agent": "WinterFell-Sync/2.0"}
 
     skus = set()
     variable_ids = []
@@ -123,7 +124,7 @@ def fetch_woocommerce_skus(config):
     logging.info("Fetching active SKUs from WooCommerce...")
     page = 1
     while True:
-        url = f"{base}/products?status=publish&per_page=100&page={page}"
+        url = f"{base}/products?status=publish&per_page=100&page={page}&{auth_params}"
         try:
             products = http_get(url, headers)
         except Exception as e:
@@ -147,7 +148,7 @@ def fetch_woocommerce_skus(config):
     for pid in variable_ids:
         var_page = 1
         while True:
-            url = f"{base}/products/{pid}/variations?per_page=100&page={var_page}"
+            url = f"{base}/products/{pid}/variations?per_page=100&page={var_page}&{auth_params}"
             try:
                 variations = http_get(url, headers)
             except Exception as e:
