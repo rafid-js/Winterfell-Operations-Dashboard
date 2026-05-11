@@ -357,6 +357,7 @@ def fetch_zoho_items(config, token):
                     "account_id":           item.get("account_id", ""),
                     "inventory_account_id": item.get("inventory_account_id", ""),
                     "stock_on_hand":        float(item.get("stock_on_hand") or 0),
+                    "item_type":            item.get("item_type", ""),
                 }
 
         page_ctx = data.get("page_context", {})
@@ -539,8 +540,17 @@ def main():
                 created += 1
 
             # Queue stock adjustment if quantity differs
+            # Only inventory-type items support stock adjustments in Zoho
+            is_inventory = True
+            if sku in zoho_lookup:
+                is_inventory = zoho_lookup[sku].get("item_type", "") == "inventory"
+                if not is_inventory:
+                    logging.warning(
+                        f"SKIP stock  [{sku}] — item is '{zoho_lookup[sku].get('item_type', 'unknown')}' "
+                        f"type in Zoho, not 'inventory'. Change it manually in Zoho Books."
+                    )
             qty_diff = product["quantity"] - int(zoho_qty)
-            if qty_diff != 0 and item_id:
+            if qty_diff != 0 and item_id and is_inventory:
                 adjustment_items.append({
                     "item_id":           item_id,
                     "quantity_adjusted": qty_diff,
