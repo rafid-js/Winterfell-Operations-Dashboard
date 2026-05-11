@@ -1,6 +1,9 @@
 {
   "nuport_api_key": "YOUR_NUPORT_API_KEY_HERE",
   "nuport_base_url": "https://api.nuport.io",
+  "woo_site_url": "https://yoursite.com",
+  "woo_consumer_key": "ck_YOUR_KEY_HERE",
+  "woo_consumer_secret": "cs_YOUR_SECRET_HERE",
   "zoho_org_id": "YOUR_ZOHO_ORGANIZATION_ID",
   "zoho_client_id": "YOUR_ZOHO_CLIENT_ID",
   "zoho_client_secret": "YOUR_ZOHO_CLIENT_SECRET",
