@@ -130,17 +130,34 @@ def get_zoho_token(config):
 def fetch_nuport_inventory(config):
     """
     Calls GET /integration/inventory?page=-1 which returns ALL records in one shot.
-    Each record contains full product details + stock quantity.
+    Tries multiple auth header formats until one works.
     """
     base = config["nuport_base_url"].rstrip("/")
     url = f"{base}/integration/inventory?page=-1"
-    headers = {"Authorization": f"Bearer {config['nuport_api_key']}"}
+    key = config["nuport_api_key"]
+
+    auth_formats = [
+        {"Authorization": key},
+        {"Authorization": f"Bearer {key}"},
+        {"X-API-Key": key},
+        {"Authorization": f"ApiKey {key}"},
+        {"Authorization": f"Token {key}"},
+    ]
 
     logging.info("Fetching all inventory from Nuport...")
-    try:
-        data = http_get(url, headers)
-    except Exception as e:
-        raise Exception(f"Nuport fetch failed: {e}")
+    last_error = None
+    for headers in auth_formats:
+        header_label = list(headers.items())[0]
+        logging.info(f"Trying auth: {header_label[0]}: {header_label[1][:20]}...")
+        try:
+            data = http_get(url, headers)
+            logging.info(f"Auth succeeded with: {header_label[0]}: {header_label[1][:20]}...")
+            return data.get("results", []), data
+        except Exception as e:
+            logging.warning(f"Auth failed ({header_label[0]}): {e}")
+            last_error = e
+
+    raise Exception(f"All Nuport auth formats failed. Last error: {last_error}")
 
     results = data.get("results", [])
     logging.info(
@@ -317,7 +334,11 @@ def main():
 
     # ── Nuport ──────────────────────────────────────────────────────────────
     try:
-        records = fetch_nuport_inventory(config)
+        records, raw_data = fetch_nuport_inventory(config)
+        logging.info(
+            f"Nuport returned {len(records)} inventory records "
+            f"(API total count: {raw_data.get('count', '?')})"
+        )
     except Exception as e:
         logging.error(f"FATAL — cannot reach Nuport: {e}")
         logging.error("Sync aborted. Check nuport_api_key and nuport_base_url in config.json")
