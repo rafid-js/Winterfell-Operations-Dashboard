@@ -56,13 +56,12 @@ def load_last_state():
 
 
 def save_state(products):
-    """Persist current product data so next run can detect changes."""
+    """Persist catalogue fields only — quantity is always compared live against Zoho."""
     state = {
         sku: {
             "name":          p["name"],
             "rate":          p["rate"],
             "purchase_rate": p["purchase_rate"],
-            "quantity":      p["quantity"],
         }
         for sku, p in products.items()
     }
@@ -72,8 +71,9 @@ def save_state(products):
 
 def filter_changed(products, last_state):
     """
-    Return only products that are new or have changed since the last run.
-    Compares name, rate, purchase_rate, and quantity.
+    Return only products whose catalogue fields (name, rate, purchase_rate)
+    changed since the last run. Quantity is intentionally excluded — stock is
+    always compared live against Zoho so timeouts never cause it to be skipped.
     """
     changed = {}
     unchanged = 0
@@ -82,16 +82,15 @@ def filter_changed(products, last_state):
         if prev is None or (
             product["name"]          != prev.get("name") or
             product["rate"]          != prev.get("rate") or
-            product["purchase_rate"] != prev.get("purchase_rate") or
-            product["quantity"]      != prev.get("quantity")
+            product["purchase_rate"] != prev.get("purchase_rate")
         ):
             changed[sku] = product
         else:
             unchanged += 1
 
     logging.info(
-        f"Change detection: {len(changed)} changed/new, {unchanged} unchanged — "
-        f"skipping unchanged items"
+        f"Catalogue change detection: {len(changed)} changed/new, "
+        f"{unchanged} unchanged (price/name) — skipping those Zoho updates"
     )
     return changed
 
@@ -475,14 +474,14 @@ def update_zoho_item(config, token, item_id, product, existing):
 
 # ── Zoho Books — Inventory Adjustment ───────────────────────────────────────
 
-def sync_zoho_stock(config, token, adjustment_items, batch_size=50):
+def sync_zoho_stock(config, token, adjustment_items):
     """
-    Creates inventory adjustments in Zoho Books in batches to avoid timeouts.
-    adjustment_items: list of {item_id, quantity_adjusted}
+    Sends all stock adjustments in one request.
     quantity_adjusted is the DIFFERENCE (positive = stock up, negative = stock down).
+    If this times out, just run the script again — catalogue updates will be
+    skipped (change tracking) and only stock will be retried.
     """
-    to_adjust = [i for i in adjustment_items if i["quantity_adjusted"] != 0]
-    if not to_adjust:
+    if not adjustment_items:
         logging.info("Stock quantities already match — no adjustment needed.")
         return 0
 
@@ -493,31 +492,22 @@ def sync_zoho_stock(config, token, adjustment_items, batch_size=50):
         f"?organization_id={org_id}"
     )
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    date_str = datetime.now().strftime("%Y-%m-%d")
 
-    total_adjusted = 0
-    batches = [to_adjust[i:i + batch_size] for i in range(0, len(to_adjust), batch_size)]
-    logging.info(f"Sending stock adjustment in {len(batches)} batch(es) of up to {batch_size} items...")
+    payload = {
+        "date":       datetime.now().strftime("%Y-%m-%d"),
+        "reason":     "Nuport OMS auto-sync",
+        "line_items": [
+            {"item_id": i["item_id"], "quantity_adjusted": i["quantity_adjusted"]}
+            for i in adjustment_items
+        ],
+    }
 
-    for idx, batch in enumerate(batches, 1):
-        payload = {
-            "date":       date_str,
-            "reason":     "Nuport OMS auto-sync",
-            "line_items": [
-                {"item_id": i["item_id"], "quantity_adjusted": i["quantity_adjusted"]}
-                for i in batch
-            ],
-        }
-        try:
-            result = zoho_request("POST", url, payload, headers)
-            if result.get("code") != 0:
-                raise Exception(result.get("message", result))
-            total_adjusted += len(batch)
-            logging.info(f"Batch {idx}/{len(batches)}: adjusted {len(batch)} items.")
-        except Exception as e:
-            logging.error(f"Batch {idx}/{len(batches)} failed: {e}")
+    result = zoho_request("POST", url, payload, headers)
+    if result.get("code") != 0:
+        raise Exception(f"Zoho inventory adjustment failed: {result.get('message', result)}")
 
-    return total_adjusted
+    logging.info(f"Stock adjustment created for {len(adjustment_items)} items.")
+    return len(adjustment_items)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -589,59 +579,51 @@ def main():
         logging.error(f"FATAL — cannot fetch Zoho items: {e}")
         sys.exit(1)
 
-    # ── Step 6: Create / update changed items only ───────────────────────────
-    logging.info(f"Syncing {len(changed_products)} changed products to Zoho Books...")
+    # ── Step 6: Update catalogue for changed items only ──────────────────────
+    if changed_products:
+        logging.info(f"Updating catalogue for {len(changed_products)} changed products...")
+        for sku, product in changed_products.items():
+            label = f"[{sku}] {product['name']}"
+            try:
+                if sku in zoho_lookup:
+                    existing = zoho_lookup[sku]
+                    update_zoho_item(config, token, existing["item_id"], product, existing)
+                    logging.info(
+                        f"UPDATED  {label}  "
+                        f"rate={product['rate']} BDT  purchase={product['purchase_rate']} BDT"
+                    )
+                    updated += 1
+                else:
+                    create_zoho_item(config, token, product)
+                    logging.info(
+                        f"CREATED  {label}  "
+                        f"rate={product['rate']} BDT  purchase={product['purchase_rate']} BDT"
+                    )
+                    created += 1
+            except Exception as e:
+                logging.error(f"ERROR    {label}  — {e}")
+                errors += 1
+    else:
+        logging.info("No catalogue changes — skipping all Zoho item updates.")
+
+    # ── Step 7: Stock adjustment for ALL products (always fresh vs Zoho) ─────
+    logging.info("Calculating stock differences for all products...")
     adjustment_items = []
-
-    for sku, product in changed_products.items():
-        label = f"[{sku}] {product['name']}"
-        try:
-            if sku in zoho_lookup:
-                existing = zoho_lookup[sku]
-                update_zoho_item(config, token, existing["item_id"], product, existing)
-                logging.info(
-                    f"UPDATED  {label}  "
-                    f"rate={product['rate']} BDT  purchase={product['purchase_rate']} BDT"
-                )
-                item_id = existing["item_id"]
-                zoho_qty = existing["stock_on_hand"]
-                updated += 1
-            else:
-                item_id = create_zoho_item(config, token, product)
-                logging.info(
-                    f"CREATED  {label}  "
-                    f"rate={product['rate']} BDT  purchase={product['purchase_rate']} BDT"
-                )
-                zoho_qty = 0.0
-                created += 1
-
-            # Queue stock adjustment if quantity differs.
-            # Zoho rejects adjustments for non-inventory or inactive items.
-            can_adjust = True
-            if sku in zoho_lookup:
-                existing_meta = zoho_lookup[sku]
-                if existing_meta.get("item_type", "") != "inventory":
-                    logging.warning(
-                        f"SKIP stock  [{sku}] — type is "
-                        f"'{existing_meta.get('item_type', 'unknown')}' in Zoho "
-                        f"(must be 'inventory'). Fix manually in Zoho Books."
-                    )
-                    can_adjust = False
-                elif existing_meta.get("status", "active") != "active":
-                    logging.warning(
-                        f"SKIP stock  [{sku}] — item is inactive/deleted in Zoho Books."
-                    )
-                    can_adjust = False
-            qty_diff = product["quantity"] - int(zoho_qty)
-            if qty_diff != 0 and item_id and can_adjust:
-                adjustment_items.append({
-                    "item_id":           item_id,
-                    "quantity_adjusted": qty_diff,
-                })
-
-        except Exception as e:
-            logging.error(f"ERROR    {label}  — {e}")
-            errors += 1
+    for sku, product in nuport_products.items():
+        existing_meta = zoho_lookup.get(sku)
+        if not existing_meta:
+            continue  # new item not yet in Zoho, skip stock
+        if existing_meta.get("item_type", "") != "inventory":
+            continue  # non-inventory items can't be adjusted
+        if existing_meta.get("status", "active") != "active":
+            continue  # inactive items can't be adjusted
+        qty_diff = product["quantity"] - int(existing_meta["stock_on_hand"])
+        if qty_diff != 0:
+            adjustment_items.append({
+                "item_id":           existing_meta["item_id"],
+                "quantity_adjusted": qty_diff,
+            })
+    logging.info(f"{len(adjustment_items)} items need stock adjustment.")
 
     # ── Step 7: Sync stock quantities ────────────────────────────────────────
     if adjustment_items:
