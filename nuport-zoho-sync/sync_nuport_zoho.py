@@ -358,6 +358,7 @@ def fetch_zoho_items(config, token):
                     "inventory_account_id": item.get("inventory_account_id", ""),
                     "stock_on_hand":        float(item.get("stock_on_hand") or 0),
                     "item_type":            item.get("item_type", ""),
+                    "status":               item.get("status", "active"),
                 }
 
         page_ctx = data.get("page_context", {})
@@ -539,18 +540,25 @@ def main():
                 zoho_qty = 0.0
                 created += 1
 
-            # Queue stock adjustment if quantity differs
-            # Only inventory-type items support stock adjustments in Zoho
-            is_inventory = True
+            # Queue stock adjustment if quantity differs.
+            # Zoho rejects adjustments for non-inventory or inactive items.
+            can_adjust = True
             if sku in zoho_lookup:
-                is_inventory = zoho_lookup[sku].get("item_type", "") == "inventory"
-                if not is_inventory:
+                existing_meta = zoho_lookup[sku]
+                if existing_meta.get("item_type", "") != "inventory":
                     logging.warning(
-                        f"SKIP stock  [{sku}] — item is '{zoho_lookup[sku].get('item_type', 'unknown')}' "
-                        f"type in Zoho, not 'inventory'. Change it manually in Zoho Books."
+                        f"SKIP stock  [{sku}] — type is "
+                        f"'{existing_meta.get('item_type', 'unknown')}' in Zoho "
+                        f"(must be 'inventory'). Fix manually in Zoho Books."
                     )
+                    can_adjust = False
+                elif existing_meta.get("status", "active") != "active":
+                    logging.warning(
+                        f"SKIP stock  [{sku}] — item is inactive/deleted in Zoho Books."
+                    )
+                    can_adjust = False
             qty_diff = product["quantity"] - int(zoho_qty)
-            if qty_diff != 0 and item_id and is_inventory:
+            if qty_diff != 0 and item_id and can_adjust:
                 adjustment_items.append({
                     "item_id":           item_id,
                     "quantity_adjusted": qty_diff,
