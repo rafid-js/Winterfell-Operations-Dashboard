@@ -475,9 +475,9 @@ def update_zoho_item(config, token, item_id, product, existing):
 
 # ── Zoho Books — Inventory Adjustment ───────────────────────────────────────
 
-def sync_zoho_stock(config, token, adjustment_items):
+def sync_zoho_stock(config, token, adjustment_items, batch_size=50):
     """
-    Creates one inventory adjustment in Zoho Books covering all quantity changes.
+    Creates inventory adjustments in Zoho Books in batches to avoid timeouts.
     adjustment_items: list of {item_id, quantity_adjusted}
     quantity_adjusted is the DIFFERENCE (positive = stock up, negative = stock down).
     """
@@ -493,22 +493,31 @@ def sync_zoho_stock(config, token, adjustment_items):
         f"?organization_id={org_id}"
     )
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    date_str = datetime.now().strftime("%Y-%m-%d")
 
-    payload = {
-        "date":   datetime.now().strftime("%Y-%m-%d"),
-        "reason": "Nuport OMS auto-sync",
-        "line_items": [
-            {"item_id": i["item_id"], "quantity_adjusted": i["quantity_adjusted"]}
-            for i in to_adjust
-        ],
-    }
+    total_adjusted = 0
+    batches = [to_adjust[i:i + batch_size] for i in range(0, len(to_adjust), batch_size)]
+    logging.info(f"Sending stock adjustment in {len(batches)} batch(es) of up to {batch_size} items...")
 
-    result = zoho_request("POST", url, payload, headers)
-    if result.get("code") != 0:
-        raise Exception(f"Zoho inventory adjustment failed: {result.get('message', result)}")
+    for idx, batch in enumerate(batches, 1):
+        payload = {
+            "date":       date_str,
+            "reason":     "Nuport OMS auto-sync",
+            "line_items": [
+                {"item_id": i["item_id"], "quantity_adjusted": i["quantity_adjusted"]}
+                for i in batch
+            ],
+        }
+        try:
+            result = zoho_request("POST", url, payload, headers)
+            if result.get("code") != 0:
+                raise Exception(result.get("message", result))
+            total_adjusted += len(batch)
+            logging.info(f"Batch {idx}/{len(batches)}: adjusted {len(batch)} items.")
+        except Exception as e:
+            logging.error(f"Batch {idx}/{len(batches)} failed: {e}")
 
-    logging.info(f"Stock adjustment created for {len(to_adjust)} items.")
-    return len(to_adjust)
+    return total_adjusted
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
