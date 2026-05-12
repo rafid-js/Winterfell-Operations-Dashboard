@@ -1,4 +1,5 @@
 config.json
+last_sync_state.json
 logs/
 __pycache__/
 *.pyc

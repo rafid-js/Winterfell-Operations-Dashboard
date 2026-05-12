@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Winterfell Operations — Nuport OMS → Zoho Books inventory sync  v2
+Winterfell Operations — Nuport OMS → Zoho Books inventory sync  v3
 - WooCommerce SKU whitelist (only products live on winterfellbd.com)
 - Winterfell Warehouse stock only
 - Sale price used as rate (fallback to base price)
 - Purchase price synced
 - Stock quantity synced via Zoho inventory adjustments
+- Local change tracking: only syncs items that actually changed since last run
 """
 
 import json
@@ -20,7 +21,8 @@ import urllib.parse
 import urllib.error
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
+CONFIG_PATH  = os.path.join(SCRIPT_DIR, "config.json")
+STATE_FILE   = os.path.join(SCRIPT_DIR, "last_sync_state.json")
 
 WINTERFELL_WAREHOUSE_KEYWORD = "winterfell"  # case-insensitive match on location label
 
@@ -38,6 +40,60 @@ def load_config():
     except json.JSONDecodeError as e:
         print(f"ERROR: config.json has invalid JSON: {e}")
         sys.exit(1)
+
+
+# ── Change tracking ──────────────────────────────────────────────────────────
+
+def load_last_state():
+    """Load the saved state from the previous sync run."""
+    if not os.path.exists(STATE_FILE):
+        return {}
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(products):
+    """Persist current product data so next run can detect changes."""
+    state = {
+        sku: {
+            "name":          p["name"],
+            "rate":          p["rate"],
+            "purchase_rate": p["purchase_rate"],
+            "quantity":      p["quantity"],
+        }
+        for sku, p in products.items()
+    }
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+
+
+def filter_changed(products, last_state):
+    """
+    Return only products that are new or have changed since the last run.
+    Compares name, rate, purchase_rate, and quantity.
+    """
+    changed = {}
+    unchanged = 0
+    for sku, product in products.items():
+        prev = last_state.get(sku)
+        if prev is None or (
+            product["name"]          != prev.get("name") or
+            product["rate"]          != prev.get("rate") or
+            product["purchase_rate"] != prev.get("purchase_rate") or
+            product["quantity"]      != prev.get("quantity")
+        ):
+            changed[sku] = product
+        else:
+            unchanged += 1
+
+    logging.info(
+        f"Change detection: {len(changed)} changed/new, {unchanged} unchanged — "
+        f"skipping unchanged items"
+    )
+    return changed
 
 
 # ── Logging ──────────────────────────────────────────────────────────────────
@@ -500,7 +556,17 @@ def main():
         print("\nSync complete: 0 created, 0 updated, 0 errors")
         return
 
-    # ── Step 4: Zoho token + fetch existing items ────────────────────────────
+    # ── Step 4: Change detection — skip items identical to last run ──────────
+    last_state = load_last_state()
+    changed_products = filter_changed(nuport_products, last_state)
+
+    if not changed_products:
+        logging.info("Nothing changed since last sync. Zoho is already up to date.")
+        print("\nSync complete: 0 created, 0 updated, 0 stock adjusted, 0 errors\n")
+        save_state(nuport_products)
+        return
+
+    # ── Step 5: Zoho token + fetch existing items ────────────────────────────
     try:
         token = get_zoho_token(config)
     except Exception as e:
@@ -514,11 +580,11 @@ def main():
         logging.error(f"FATAL — cannot fetch Zoho items: {e}")
         sys.exit(1)
 
-    # ── Step 5: Create / update item catalogue ───────────────────────────────
-    logging.info(f"Syncing {len(nuport_products)} products to Zoho Books...")
+    # ── Step 6: Create / update changed items only ───────────────────────────
+    logging.info(f"Syncing {len(changed_products)} changed products to Zoho Books...")
     adjustment_items = []
 
-    for sku, product in nuport_products.items():
+    for sku, product in changed_products.items():
         label = f"[{sku}] {product['name']}"
         try:
             if sku in zoho_lookup:
@@ -568,13 +634,17 @@ def main():
             logging.error(f"ERROR    {label}  — {e}")
             errors += 1
 
-    # ── Step 6: Sync stock quantities ────────────────────────────────────────
+    # ── Step 7: Sync stock quantities ────────────────────────────────────────
     if adjustment_items:
         try:
             stock_adjusted = sync_zoho_stock(config, token, adjustment_items)
         except Exception as e:
             logging.error(f"Stock adjustment failed: {e}")
             logging.error("Item catalogue was synced successfully. Only stock quantities failed.")
+
+    # ── Step 8: Save state so next run skips unchanged items ─────────────────
+    save_state(nuport_products)
+    logging.info("State saved — next run will only sync items that change.")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     summary = (
