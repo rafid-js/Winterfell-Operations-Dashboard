@@ -324,22 +324,25 @@ def build_wc_order(nuport_order: dict, customer_id=None) -> dict:
     sku_note = f" | Missing SKUs: {', '.join(skus_missing)}" if skus_missing else ""
     customer_note = f"Order via {source} | Nuport: {so_number}{sku_note}"
 
+    billing = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "address_1": address,
+        "address_2": "",
+        "city": city,
+        "postcode": postcode,
+        "country": "BD",
+        "phone": phone,
+    }
+    if email:
+        billing["email"] = email  # Omit entirely if invalid — WC rejects both bad values and ""
+
     payload = {
         "status": wc_status,
         "payment_method": "cod",
         "payment_method_title": "Cash on Delivery",
         "currency": "BDT",
-        "billing": {
-            "first_name": first_name,
-            "last_name": last_name,
-            "address_1": address,
-            "address_2": "",
-            "city": city,
-            "postcode": postcode,
-            "country": "BD",
-            "email": email,
-            "phone": phone,
-        },
+        "billing": billing,
         "shipping": {
             "first_name": first_name,
             "last_name": last_name,
