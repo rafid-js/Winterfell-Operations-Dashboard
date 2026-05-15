@@ -133,7 +133,19 @@ def normalise_phone(raw: str) -> str:
     return p
 
 
-# ── Name splitting ────────────────────────────────────────────────────────────
+# ── Email validation ──────────────────────────────────────────────────────────
+
+def sanitise_email(raw: str) -> str:
+    """Return email if valid, else '' — WC accepts '' but rejects invalid formats."""
+    if not raw:
+        return ""
+    import re as _re
+    if _re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', raw.strip()):
+        return raw.strip()
+    logging.warning(f"Invalid email discarded: '{raw}'")
+    return ""
+
+
 
 def split_name(full_name: str) -> tuple:
     parts = (full_name or "").strip().split(None, 1)
@@ -270,7 +282,7 @@ def build_wc_order(nuport_order: dict, customer_id=None) -> dict:
     full_name = distributor.get("name", "")
     first_name, last_name = split_name(full_name)
     phone = normalise_phone(distributor.get("phone", ""))
-    email = distributor.get("email") or ""
+    email = sanitise_email(distributor.get("email") or "")
     address = location.get("address", "")
     district = location.get("district", "")
     city = extract_city(district, address)
