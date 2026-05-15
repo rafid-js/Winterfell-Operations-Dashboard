@@ -9,6 +9,7 @@
 
   "alert_email": "you@yourstore.com",
   "log_dir": "logs/",
+  "poll_interval_minutes": 5,
   "status_sync_interval_minutes": 15,
 
   "website_order_id_field": "referenceId",

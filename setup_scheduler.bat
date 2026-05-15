@@ -43,34 +43,21 @@ echo Installing Python dependencies...
 echo.
 
 :: Remove old tasks if they exist
+schtasks /delete /tn "WinterfellOrderPoller"     /f >nul 2>&1
 schtasks /delete /tn "WinterfellWebhookListener" /f >nul 2>&1
 schtasks /delete /tn "WinterfellStatusSync"      /f >nul 2>&1
 
-:: Register webhook listener — starts on user login
+:: Register order poller — starts on user login, runs continuously (self-schedules)
 schtasks /create ^
-    /tn "WinterfellWebhookListener" ^
-    /tr "\"%PYTHON_EXE%\" \"%SCRIPT_DIR%webhook_listener.py\"" ^
+    /tn "WinterfellOrderPoller" ^
+    /tr "\"%PYTHON_EXE%\" \"%SCRIPT_DIR%order_poller.py\"" ^
     /sc ONLOGON ^
     /rl HIGHEST ^
     /f
 if errorlevel 1 (
-    echo FAILED to register WinterfellWebhookListener
+    echo FAILED to register WinterfellOrderPoller
 ) else (
-    echo [OK] WinterfellWebhookListener — runs on login
-)
-
-:: Register status sync — every 15 minutes
-schtasks /create ^
-    /tn "WinterfellStatusSync" ^
-    /tr "\"%PYTHON_EXE%\" \"%SCRIPT_DIR%status_sync.py\"" ^
-    /sc MINUTE ^
-    /mo 15 ^
-    /rl HIGHEST ^
-    /f
-if errorlevel 1 (
-    echo FAILED to register WinterfellStatusSync
-) else (
-    echo [OK] WinterfellStatusSync — runs every 15 minutes
+    echo [OK] WinterfellOrderPoller — runs on login, polls every 5 min
 )
 
 echo.
