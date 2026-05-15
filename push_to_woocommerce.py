@@ -217,22 +217,12 @@ def lookup_product(sku: str) -> tuple:
 
 def is_duplicate_in_wc(so_number: str) -> bool:
     """
-    Search WooCommerce orders for an existing order with meta _nuport_so_number.
-    This is Layer 2 duplicate prevention — catches cases where the webhook fires twice.
+    Layer 2 duplicate check using local tracked_orders.json.
+    Written to on every successful push — prevents double-push if webhook fires twice.
+    WooCommerce REST API does not support meta_key/meta_value filtering natively,
+    so local tracking is the reliable approach.
     """
-    try:
-        resp = requests.get(
-            _wc_url("/orders"),
-            params={"meta_key": "_nuport_so_number", "meta_value": so_number},
-            auth=_wc_auth(),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        orders = resp.json()
-        return len(orders) > 0
-    except Exception as exc:
-        logging.warning(f"WC duplicate check failed for {so_number}: {exc}")
-        return False  # fail open — attempt creation, WC won't create true duplicates
+    return so_number in load_tracked_orders()
 
 
 # ── Filter logic ──────────────────────────────────────────────────────────────
