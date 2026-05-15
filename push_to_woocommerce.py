@@ -2,15 +2,14 @@
 push_to_woocommerce.py
 Nuport off-channel orders → WooCommerce
 
-CONFIRMED NUPORT API FIELD NAMES (from live API docs):
-  order["internalId"]                    → SO number e.g. "SO-0036"
+CONFIRMED NUPORT API FIELD NAMES (verified against live order SO-65778):
+  order["internalId"]                    → SO number e.g. "SO-65778"
   order["source"]                        → UPPERCASE: "WEBSITE", "WHATSAPP", etc.
-  order["referenceId"] OR order["integrationId"]
-                                         → Website Order ID (WC order ID, e.g. 76106).
-                                           The code checks BOTH fields — whichever is non-null
-                                           triggers the skip. Run verify_fields.py to confirm
-                                           which one your account actually uses.
-  order["status"]                        → UPPERCASE: "PENDING", "APPROVED", etc.
+  order["referenceId"]                   → WC order ID e.g. "76106" ✓ CONFIRMED
+  order["integrationId"]                 → Nuport-internal UUID, NOT the WC order ID
+  order["status"]                        → "REQUESTED" for Pending (not "PENDING") ✓ CONFIRMED
+                                           Full map: REQUESTED/APPROVED/PROCESSING/SHIPPED/
+                                           IN_TRANSIT/ON_HOLD/COMPLETED/CANCELLED/FLAGGED
   order["deliveryCharge"]                → string e.g. "80"
   order["distributor"]["name"]           → customer full name
   order["distributor"]["phone"]          → "+8801XXXXXXXXX"
@@ -247,13 +246,11 @@ def check_should_push(order: dict) -> tuple:
     so_number = order.get("internalId", "?")
 
     # Layer 1 — Website Order ID check (fastest)
-    # Check both candidate fields — the WC→Nuport plugin may use either one.
-    # From live screenshot: SO-65778 has Website Order ID = 76106 (WC order #76106).
-    # Run verify_fields.py to confirm which field your account uses.
-    for woid_field in ("referenceId", "integrationId"):
-        website_order_id = order.get(woid_field)
-        if website_order_id:
-            return False, f"Website Order ID '{website_order_id}' found in '{woid_field}'"
+    # CONFIRMED from live API (SO-65778): referenceId = "76106" (WC order #76106).
+    # integrationId is a Nuport-internal UUID — not the WC order ID.
+    reference_id = order.get("referenceId")
+    if reference_id:
+        return False, f"referenceId '{reference_id}' present — order already in WooCommerce"
 
     source = (order.get("source") or "").upper()
     skip_sources = {s.upper() for s in cfg.get("skip_sources", ["WEBSITE"])}

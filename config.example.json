@@ -11,7 +11,7 @@
   "log_dir": "logs/",
   "status_sync_interval_minutes": 15,
 
-  "website_order_id_field": "integrationId",
+  "website_order_id_field": "referenceId",
 
   "push_sources": [
     "MESSENGER", "FACEBOOK", "INSTAGRAM", "WHATSAPP",
