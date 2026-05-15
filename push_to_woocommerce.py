@@ -5,10 +5,11 @@ Nuport off-channel orders → WooCommerce
 CONFIRMED NUPORT API FIELD NAMES (from live API docs):
   order["internalId"]                    → SO number e.g. "SO-0036"
   order["source"]                        → UPPERCASE: "WEBSITE", "WHATSAPP", etc.
-  order["integrationId"]                 → Website Order ID (WC order ID) — VERIFY_ME
-                                           If this is wrong, change "website_order_id_field"
-                                           in config.json to the correct field name.
-                                           Run: python verify_fields.py to check.
+  order["referenceId"] OR order["integrationId"]
+                                         → Website Order ID (WC order ID, e.g. 76106).
+                                           The code checks BOTH fields — whichever is non-null
+                                           triggers the skip. Run verify_fields.py to confirm
+                                           which one your account actually uses.
   order["status"]                        → UPPERCASE: "PENDING", "APPROVED", etc.
   order["deliveryCharge"]                → string e.g. "80"
   order["distributor"]["name"]           → customer full name
@@ -246,10 +247,13 @@ def check_should_push(order: dict) -> tuple:
     so_number = order.get("internalId", "?")
 
     # Layer 1 — Website Order ID check (fastest)
-    woid_field = cfg.get("website_order_id_field", "integrationId")
-    website_order_id = order.get(woid_field)
-    if website_order_id:
-        return False, f"Website Order ID '{website_order_id}' present in '{woid_field}'"
+    # Check both candidate fields — the WC→Nuport plugin may use either one.
+    # From live screenshot: SO-65778 has Website Order ID = 76106 (WC order #76106).
+    # Run verify_fields.py to confirm which field your account uses.
+    for woid_field in ("referenceId", "integrationId"):
+        website_order_id = order.get(woid_field)
+        if website_order_id:
+            return False, f"Website Order ID '{website_order_id}' found in '{woid_field}'"
 
     source = (order.get("source") or "").upper()
     skip_sources = {s.upper() for s in cfg.get("skip_sources", ["WEBSITE"])}

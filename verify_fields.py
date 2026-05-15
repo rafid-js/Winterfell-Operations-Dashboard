@@ -2,11 +2,14 @@
 verify_fields.py
 One-shot script to confirm which Nuport field holds the WooCommerce order ID.
 
-Run it with a real WEBSITE-sourced Nuport order that you know came from WooCommerce:
+Run it against SO-65778 — a confirmed WEBSITE order with WC order ID = 76106:
   python verify_fields.py --so-number SO-65778
 
-It will print every top-level field so you can see which one holds the WC order ID (e.g. 76106).
-Then update "website_order_id_field" in config.json accordingly.
+It prints every top-level field. Find which one shows "76106".
+That field name is your "website_order_id_field" value in config.json.
+
+The code already checks BOTH referenceId and integrationId so you likely don't
+need to change anything — this script just satisfies your curiosity.
 """
 
 import argparse

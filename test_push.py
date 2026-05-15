@@ -77,17 +77,35 @@ TEST_ORDER_WHATSAPP = {
     ],
 }
 
-# Also test a WEBSITE order — should be SKIPPED
+# WEBSITE order — should be SKIPPED (mirrors real SO-65778 from live screenshot)
+# Source = WEBSITE, referenceId or integrationId = "76106" (WC order #76106)
+# Both fields are checked; whichever one your account uses will trigger the skip.
 TEST_ORDER_WEBSITE = {
-    "internalId": "SO-TEST100",
-    "source": "WEBSITE",                # Should be skipped
-    "integrationId": "76106",           # WC order ID already set
-    "status": "APPROVED",
-    "deliveryCharge": "0",
-    "totalAmount": "490",
-    "distributor": {"name": "Test Customer", "phone": "+8801700000000", "email": ""},
-    "location": {"address": "Dhaka", "district": "Dhaka District", "postCode": ""},
-    "salesOrderItems": [],
+    "internalId": "SO-65778",
+    "source": "WEBSITE",                # Must be skipped
+    "referenceId": "76106",             # WC order ID in referenceId (most likely)
+    "integrationId": None,
+    "status": "PENDING",
+    "deliveryCharge": "80",
+    "totalAmount": "570",
+    "distributor": {
+        "name": "Zahid Mustafiz",
+        "phone": "+8801949644003",
+        "email": "zahidmustafiz568@gmail.com",
+    },
+    "location": {
+        "address": "Friends garden ,mizmizi , siddhirgonj, Narayanganj",
+        "district": "Narayanganj District",
+        "postCode": "",
+        "country": "BD",
+    },
+    "salesOrderItems": [
+        {
+            "quantity": 1,
+            "price": "490",
+            "product": {"name": "Hope Rose Tee - Black - 3XL", "sku": "54463-54468"},
+        }
+    ],
 }
 
 # Test a MESSENGER order
