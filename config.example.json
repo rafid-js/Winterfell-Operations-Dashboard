@@ -1,0 +1,22 @@
+{
+  "nuport_api_key": "YOUR_NUPORT_API_KEY",
+  "nuport_base_url": "https://api.nuport.io",
+  "nuport_webhook_secret": "GENERATE_RANDOM_32_CHAR_STRING",
+
+  "woocommerce_url": "https://yourstore.com",
+  "woocommerce_consumer_key": "ck_...",
+  "woocommerce_consumer_secret": "cs_...",
+
+  "alert_email": "you@yourstore.com",
+  "log_dir": "logs/",
+  "status_sync_interval_minutes": 15,
+
+  "website_order_id_field": "integrationId",
+
+  "push_sources": [
+    "MESSENGER", "FACEBOOK", "INSTAGRAM", "WHATSAPP",
+    "PHONE_CALL", "OFFLINE", "OTHER", "UP_SELL",
+    "LIVE_CHAT", "TELESALES", "TIKTOK"
+  ],
+  "skip_sources": ["WEBSITE"]
+}

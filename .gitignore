@@ -1,3 +1,11 @@
 node_modules/
 .env
 .env.local
+
+# Nuport sync — credentials and runtime data
+config.json
+logs/
+tracked_orders.json
+failed_orders.json
+__pycache__/
+*.pyc
