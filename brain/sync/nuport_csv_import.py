@@ -16,6 +16,7 @@ import argparse
 from collections import defaultdict
 from datetime import datetime
 import psycopg2.extras
+import time
 
 sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
 from db import engine
@@ -243,34 +244,49 @@ def build_tuples(groups: dict):
 
 # ── Bulk upsert ───────────────────────────────────────────────────────────────
 
+def _get_raw():
+    for attempt in range(5):
+        try:
+            return engine.raw_connection()
+        except Exception as e:
+            wait = 2 ** attempt
+            print(f"\n  ⚠ connect failed ({e}), retrying in {wait}s...")
+            time.sleep(wait)
+    raise RuntimeError("Could not connect to database after 5 attempts")
+
+
 def _bulk(sql, tuples, label):
-    """Upsert in small batches, reconnecting on SSL drop."""
+    """Upsert in batches, reusing one connection and reconnecting only on failure."""
     total = len(tuples)
     ok = 0
     i = 0
+    raw = _get_raw()
+    cur = raw.cursor()
+
     while i < total:
         batch = tuples[i:i + BATCH]
-        raw = engine.raw_connection()
         try:
-            cur = raw.cursor()
             psycopg2.extras.execute_values(cur, sql, batch, page_size=BATCH)
             raw.commit()
-            cur.close()
             ok += len(batch)
             i += BATCH
             pct = ok / total * 100
             print(f"  {label}: {ok}/{total} ({pct:.0f}%)", end='\r')
+            time.sleep(0.05)  # small pause — don't overwhelm Railway
         except Exception as e:
+            print(f"\n  ⚠ batch {i} failed ({e}), reconnecting...")
             try:
-                raw.rollback()
-            except Exception:
-                pass
-            print(f"\n  ⚠ batch {i}-{i+len(batch)} failed ({e}), retrying...")
-        finally:
-            try:
+                cur.close()
                 raw.close()
             except Exception:
                 pass
+            time.sleep(2)
+            raw = _get_raw()
+            cur = raw.cursor()
+            # retry same batch — don't advance i
+
+    cur.close()
+    raw.close()
     print(f"  {label}: {ok}/{total} (100%) ✓")
     return ok
 
@@ -290,7 +306,7 @@ def process(groups: dict):
     i_ok = _bulk(SQL_ITEM, items, 'items')
 
     print("Linking customer IDs to orders...")
-    raw = engine.raw_connection()
+    raw = _get_raw()
     try:
         cur = raw.cursor()
         cur.execute(SQL_LINK)
