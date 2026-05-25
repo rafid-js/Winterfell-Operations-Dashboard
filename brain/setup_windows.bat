@@ -17,7 +17,7 @@ echo.
 
 echo Installing required packages...
 echo.
-pip install psycopg2-binary sqlalchemy pgvector python-dotenv
+pip install psycopg2-binary sqlalchemy pgvector python-dotenv requests
 
 if %errorlevel% neq 0 (
     echo.
