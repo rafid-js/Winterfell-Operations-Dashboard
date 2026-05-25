@@ -204,21 +204,39 @@ def build_tuples(groups: dict):
             NOW,
         ))
 
+        seen_items = {}
         for row in rows:
             sku = _str(row.get('Product SKU'))
             if not sku:
                 continue
             size, color = _parse_attr(row.get('Product Attributes'))
-            items.append((
-                so_number, sku,
-                _str(row.get('Product Name')),
-                size, color,
-                _int(row.get('Product Qty')) or 1,
-                _float(row.get('Unit Price')),
-                _float(row.get('Total Price')),
-                _float(row.get('Product Discount')) or 0,
-                _float(row.get('Price After Discount')),
-            ))
+            key = (so_number, sku, size or '', color or '')
+            qty        = _int(row.get('Product Qty')) or 1
+            unit_price = _float(row.get('Unit Price'))
+            if key in seen_items:
+                # duplicate within same order — sum quantities and prices
+                prev = seen_items[key]
+                prev_qty = prev[5]
+                seen_items[key] = (
+                    so_number, sku, prev[2], size, color,
+                    prev_qty + qty,
+                    unit_price,
+                    (_float(row.get('Total Price')) or 0) + (prev[7] or 0),
+                    (_float(row.get('Product Discount')) or 0) + (prev[8] or 0),
+                    (_float(row.get('Price After Discount')) or 0) + (prev[9] or 0),
+                )
+            else:
+                seen_items[key] = (
+                    so_number, sku,
+                    _str(row.get('Product Name')),
+                    size, color,
+                    qty,
+                    unit_price,
+                    _float(row.get('Total Price')),
+                    _float(row.get('Product Discount')) or 0,
+                    _float(row.get('Price After Discount')),
+                )
+        items.extend(seen_items.values())
 
     return list(customers.values()), orders, items
 
