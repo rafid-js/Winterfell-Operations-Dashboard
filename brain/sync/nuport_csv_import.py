@@ -7,20 +7,21 @@ as multiple rows with the same Invoice (SO number).
 Usage:
   python -m sync.nuport_csv_import --file "C:\\path\\to\\nuport_orders.csv"
 
-Safe to re-run — all upserts use ON CONFLICT DO UPDATE / DO NOTHING.
-Batches all inserts for speed (3 round trips total, not 50k+).
+Safe to re-run — all upserts use ON CONFLICT DO UPDATE.
+Uses psycopg2 execute_values for true bulk inserts (one SQL per batch).
 """
 import sys
 import csv
 import argparse
 from collections import defaultdict
 from datetime import datetime
-from sqlalchemy import text
+import psycopg2.extras
 
 sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
-from db import get_connection
+from db import engine
 
-BATCH = 500
+BATCH = 2000
+NOW   = datetime.now()
 
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
@@ -54,8 +55,12 @@ def _int(val):
         return None
 
 
+def _str(val):
+    v = (val or '').strip()
+    return v or None
+
+
 def _parse_attr(attr_str):
-    """Parse 'sizes: L' or 'color: Red' → (size, color)."""
     size = color = None
     if not attr_str or not str(attr_str).strip():
         return size, color
@@ -73,37 +78,25 @@ def _parse_attr(attr_str):
     return size, color
 
 
-# ── SQL ───────────────────────────────────────────────────────────────────────
+# ── SQL (psycopg2 execute_values style — VALUES %s) ───────────────────────────
 
-UPSERT_CUSTOMER = text("""
+SQL_CUSTOMER = """
     INSERT INTO customers (phone, name, address, updated_at)
-    VALUES (:phone, :name, :address, NOW())
+    VALUES %s
     ON CONFLICT (phone) DO UPDATE SET
         name       = COALESCE(EXCLUDED.name,    customers.name),
         address    = COALESCE(EXCLUDED.address, customers.address),
-        updated_at = NOW()
-""")
+        updated_at = EXCLUDED.updated_at
+"""
 
-UPSERT_ORDER = text("""
+SQL_ORDER = """
     INSERT INTO orders (
         so_number, nuport_status, source_channel,
-        customer_name, customer_phone,
-        wc_order_number,
+        customer_name, customer_phone, wc_order_number,
         product_total, delivery_fee, discount_amount, total_receivable,
-        collected_amount,
-        pathao_waybill,
-        order_date, shipped_date, delivered_date,
-        updated_at
-    ) VALUES (
-        :so_number, :nuport_status, :source_channel,
-        :customer_name, :customer_phone,
-        :wc_order_number,
-        :product_total, :delivery_fee, :discount_amount, :total_receivable,
-        :collected_amount,
-        :pathao_waybill,
-        :order_date, :shipped_date, :delivered_date,
-        NOW()
-    )
+        collected_amount, pathao_waybill,
+        order_date, shipped_date, delivered_date, updated_at
+    ) VALUES %s
     ON CONFLICT (so_number) DO UPDATE SET
         nuport_status    = COALESCE(EXCLUDED.nuport_status,    orders.nuport_status),
         source_channel   = COALESCE(EXCLUDED.source_channel,   orders.source_channel),
@@ -118,17 +111,14 @@ UPSERT_ORDER = text("""
         pathao_waybill   = COALESCE(EXCLUDED.pathao_waybill,   orders.pathao_waybill),
         shipped_date     = COALESCE(EXCLUDED.shipped_date,     orders.shipped_date),
         delivered_date   = COALESCE(EXCLUDED.delivered_date,   orders.delivered_date),
-        updated_at       = NOW()
-""")
+        updated_at       = EXCLUDED.updated_at
+"""
 
-UPSERT_ITEM = text("""
+SQL_ITEM = """
     INSERT INTO order_items (
         so_number, sku, product_name, size, color,
         quantity, unit_price, total_price, item_discount, price_after_discount
-    ) VALUES (
-        :so_number, :sku, :product_name, :size, :color,
-        :quantity, :unit_price, :total_price, :item_discount, :price_after_discount
-    )
+    ) VALUES %s
     ON CONFLICT (so_number, sku, COALESCE(size,''), COALESCE(color,''))
     DO UPDATE SET
         quantity             = EXCLUDED.quantity,
@@ -136,155 +126,155 @@ UPSERT_ITEM = text("""
         total_price          = EXCLUDED.total_price,
         item_discount        = EXCLUDED.item_discount,
         price_after_discount = EXCLUDED.price_after_discount
-""")
+"""
 
-LINK_CUSTOMER_IDS = text("""
-    UPDATE orders o
-    SET customer_id = c.id
+SQL_LINK = """
+    UPDATE orders o SET customer_id = c.id
     FROM customers c
-    WHERE o.customer_phone = c.phone
-      AND o.customer_id IS NULL
-""")
+    WHERE o.customer_phone = c.phone AND o.customer_id IS NULL
+"""
 
 
 # ── CSV load ──────────────────────────────────────────────────────────────────
 
 def load_csv(path: str) -> dict:
-    """Read CSV and group rows by Invoice (SO number)."""
     groups = defaultdict(list)
-    total_rows = 0
-    skipped = 0
+    total_rows = skipped = 0
 
     with open(path, encoding='utf-8-sig', newline='') as f:
         sample = f.read(4096)
         f.seek(0)
         try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=',\t;|')
-        except csv.Error:
-            dialect = csv.excel
+            import csv as _csv
+            dialect = _csv.Sniffer().sniff(sample, delimiters=',\t;|')
+        except Exception:
+            import csv as _csv
+            dialect = _csv.excel
         reader = csv.DictReader(f, dialect=dialect)
         print(f"  Detected delimiter: {repr(dialect.delimiter)}")
         for row in reader:
             total_rows += 1
-            so = (row.get('Invoice') or '').strip()
+            so = _str(row.get('Invoice'))
             if not so:
                 skipped += 1
                 continue
             groups[so].append(row)
 
-    print(f"  {total_rows} rows  |  {len(groups)} unique orders  |  {skipped} skipped (no Invoice)\n")
+    print(f"  {total_rows} rows  |  {len(groups)} unique orders  |  {skipped} skipped\n")
     return groups
 
 
-# ── Build records ─────────────────────────────────────────────────────────────
+# ── Build tuples ──────────────────────────────────────────────────────────────
 
-def build_records(groups: dict):
-    customers = {}   # phone → dict (deduplicated)
+def build_tuples(groups: dict):
+    customers = {}
     orders    = []
     items     = []
 
     for so_number, rows in groups.items():
         first = rows[0]
-        phone = (first.get('Customer Phone Number') or '').strip() or None
+        phone = _str(first.get('Customer Phone Number'))
 
         if phone and phone not in customers:
-            customers[phone] = {
-                'phone':   phone,
-                'name':    (first.get('Customer Name') or '').strip() or None,
-                'address': (first.get('Customer Address') or '').strip() or None,
-            }
+            customers[phone] = (
+                phone,
+                _str(first.get('Customer Name')),
+                _str(first.get('Customer Address')),
+                NOW,
+            )
 
-        sales_amount   = _float(first.get('Sales Amount'))
-        delivery_fee   = _float(first.get('Delivery Fee'))
-        order_discount = _float(first.get('Order Discount'))
-        total_recv = None
-        if sales_amount is not None and delivery_fee is not None:
-            total_recv = round(sales_amount + delivery_fee - (order_discount or 0), 2)
+        sales  = _float(first.get('Sales Amount'))
+        fee    = _float(first.get('Delivery Fee'))
+        disc   = _float(first.get('Order Discount'))
+        recv   = round(sales + fee - (disc or 0), 2) if sales is not None and fee is not None else None
 
-        orders.append({
-            'so_number':        so_number,
-            'nuport_status':    (first.get('Status') or '').strip() or None,
-            'source_channel':   (first.get('Order Source') or '').strip() or None,
-            'customer_name':    (first.get('Customer Name') or '').strip() or None,
-            'customer_phone':   phone,
-            'wc_order_number':  (first.get('Website Order ID') or '').strip() or None,
-            'product_total':    sales_amount,
-            'delivery_fee':     delivery_fee,
-            'discount_amount':  order_discount,
-            'total_receivable': total_recv,
-            'collected_amount': _float(first.get('Payments/Paid Amount')),
-            'pathao_waybill':   (first.get('Delivery ID') or '').strip() or None,
-            'order_date':       _dt(first.get('Creation Date')),
-            'shipped_date':     _dt(first.get('Shipped At')),
-            'delivered_date':   _dt(first.get('Delivered At')),
-        })
+        orders.append((
+            so_number,
+            _str(first.get('Status')),
+            _str(first.get('Order Source')),
+            _str(first.get('Customer Name')),
+            phone,
+            _str(first.get('Website Order ID')),
+            sales, fee, disc, recv,
+            _float(first.get('Payments/Paid Amount')),
+            _str(first.get('Delivery ID')),
+            _dt(first.get('Creation Date')),
+            _dt(first.get('Shipped At')),
+            _dt(first.get('Delivered At')),
+            NOW,
+        ))
 
         for row in rows:
-            sku = (row.get('Product SKU') or '').strip()
+            sku = _str(row.get('Product SKU'))
             if not sku:
                 continue
             size, color = _parse_attr(row.get('Product Attributes'))
-            items.append({
-                'so_number':            so_number,
-                'sku':                  sku,
-                'product_name':         (row.get('Product Name') or '').strip() or None,
-                'size':                 size,
-                'color':                color,
-                'quantity':             _int(row.get('Product Qty')) or 1,
-                'unit_price':           _float(row.get('Unit Price')),
-                'total_price':          _float(row.get('Total Price')),
-                'item_discount':        _float(row.get('Product Discount')) or 0,
-                'price_after_discount': _float(row.get('Price After Discount')),
-            })
+            items.append((
+                so_number, sku,
+                _str(row.get('Product Name')),
+                size, color,
+                _int(row.get('Product Qty')) or 1,
+                _float(row.get('Unit Price')),
+                _float(row.get('Total Price')),
+                _float(row.get('Product Discount')) or 0,
+                _float(row.get('Price After Discount')),
+            ))
 
     return list(customers.values()), orders, items
 
 
-# ── Batch upsert ──────────────────────────────────────────────────────────────
+# ── Bulk upsert ───────────────────────────────────────────────────────────────
 
-def _run_batches(conn, sql, records, label):
-    total = len(records)
-    ok = err = 0
+def _bulk(cur, sql, tuples, label):
+    total = len(tuples)
+    ok = 0
     for i in range(0, total, BATCH):
-        batch = records[i:i + BATCH]
-        try:
-            conn.execute(sql, batch)
-            conn.commit()
-            ok += len(batch)
-        except Exception as e:
-            conn.rollback()
-            err += len(batch)
-            print(f"  ✗ {label} batch {i}-{i+len(batch)}: {e}")
-        pct = min(i + BATCH, total) / total * 100
-        print(f"  {label}: {min(i+BATCH, total)}/{total} ({pct:.0f}%)", end='\r')
-    print()
-    return ok, err
+        batch = tuples[i:i + BATCH]
+        psycopg2.extras.execute_values(cur, sql, batch, page_size=BATCH)
+        ok += len(batch)
+        pct = ok / total * 100
+        print(f"  {label}: {ok}/{total} ({pct:.0f}%)", end='\r')
+    print(f"  {label}: {ok}/{total} (100%) ✓")
+    return ok
 
 
 def process(groups: dict):
     print("Building records in memory...")
-    customers, orders, items = build_records(groups)
-    print(f"  {len(customers)} customers  |  {len(orders)} orders  |  {len(items)} items\n")
+    customers, orders, items = build_tuples(groups)
+    print(f"  {len(customers)} customers | {len(orders)} orders | {len(items)} items\n")
 
-    with get_connection() as conn:
+    raw = engine.raw_connection()
+    try:
+        cur = raw.cursor()
+
         print("Upserting customers...")
-        c_ok, c_err = _run_batches(conn, UPSERT_CUSTOMER, customers, 'customers')
+        c_ok = _bulk(cur, SQL_CUSTOMER, customers, 'customers')
+        raw.commit()
 
         print("Upserting orders...")
-        o_ok, o_err = _run_batches(conn, UPSERT_ORDER, orders, 'orders')
+        o_ok = _bulk(cur, SQL_ORDER, orders, 'orders')
+        raw.commit()
 
         print("Upserting order items...")
-        i_ok, i_err = _run_batches(conn, UPSERT_ITEM, items, 'items')
+        i_ok = _bulk(cur, SQL_ITEM, items, 'items')
+        raw.commit()
 
         print("Linking customer IDs to orders...")
-        conn.execute(LINK_CUSTOMER_IDS)
-        conn.commit()
+        cur.execute(SQL_LINK)
+        raw.commit()
         print("  ✓ done\n")
 
+        cur.close()
+    except Exception as e:
+        raw.rollback()
+        raise e
+    finally:
+        raw.close()
+
     print("── Summary ──")
-    print(f"  customers : {c_ok} ok  {c_err} errors")
-    print(f"  orders    : {o_ok} ok  {o_err} errors")
-    print(f"  items     : {i_ok} ok  {i_err} errors")
+    print(f"  customers : {c_ok}")
+    print(f"  orders    : {o_ok}")
+    print(f"  items     : {i_ok}")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
