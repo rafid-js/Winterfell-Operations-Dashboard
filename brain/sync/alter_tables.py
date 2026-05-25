@@ -114,6 +114,7 @@ NEW_TABLES = [
 ]
 
 NEW_INDEXES = [
+    ("idx_ad_spend_unique",       "CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_spend_unique ON ad_spend(date, campaign_id, adset_id)"),
     ("idx_order_items_so",
      "CREATE INDEX IF NOT EXISTS idx_order_items_so ON order_items(so_number)"),
     ("idx_order_items_sku",

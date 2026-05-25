@@ -246,6 +246,7 @@ INDEXES = [
     ("idx_waybills_status",       "CREATE INDEX IF NOT EXISTS idx_waybills_status ON pathao_waybills(current_status)"),
     ("idx_waybills_lost",         "CREATE INDEX IF NOT EXISTS idx_waybills_lost ON pathao_waybills(is_lost)"),
     ("idx_ad_spend_date",         "CREATE INDEX IF NOT EXISTS idx_ad_spend_date ON ad_spend(date)"),
+    ("idx_ad_spend_unique",       "CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_spend_unique ON ad_spend(date, campaign_id, adset_id)"),
     ("idx_knowledge_source",      "CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_base(source_type)"),
     ("idx_order_items_so",        "CREATE INDEX IF NOT EXISTS idx_order_items_so ON order_items(so_number)"),
     ("idx_order_items_sku",       "CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku)"),
