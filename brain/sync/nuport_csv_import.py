@@ -147,7 +147,15 @@ def load_csv(path: str) -> dict:
     skipped = 0
 
     with open(path, encoding='utf-8-sig', newline='') as f:
-        reader = csv.DictReader(f, delimiter='\t')
+        sample = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=',\t;|')
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(f, dialect=dialect)
+        print(f"  Detected delimiter: {repr(dialect.delimiter)}")
+        print(f"  Columns: {reader.fieldnames}\n")
         for row in reader:
             total_rows += 1
             so = (row.get('Invoice') or '').strip()
