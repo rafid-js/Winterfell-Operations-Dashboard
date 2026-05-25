@@ -24,6 +24,20 @@ MIGRATIONS = [
      "ALTER TABLE customers ALTER COLUMN phone TYPE VARCHAR(50)"),
     ("orders", "customer_phone",
      "ALTER TABLE orders ALTER COLUMN customer_phone TYPE VARCHAR(50)"),
+
+    # Widen so_number — some Nuport IDs exceed 20 chars (FK tables first)
+    ("order_items", "so_number",
+     "ALTER TABLE order_items ALTER COLUMN so_number TYPE VARCHAR(50)"),
+    ("financials", "so_number",
+     "ALTER TABLE financials ALTER COLUMN so_number TYPE VARCHAR(50)"),
+    ("pathao_waybills", "so_number",
+     "ALTER TABLE pathao_waybills ALTER COLUMN so_number TYPE VARCHAR(50)"),
+    ("orders", "so_number",
+     "ALTER TABLE orders ALTER COLUMN so_number TYPE VARCHAR(50)"),
+
+    # Widen wc_order_number to be safe
+    ("orders", "wc_order_number",
+     "ALTER TABLE orders ALTER COLUMN wc_order_number TYPE VARCHAR(50)"),
 ]
 
 INDEXES = [

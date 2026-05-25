@@ -38,7 +38,7 @@ TABLES = [
     ("orders", """
         CREATE TABLE IF NOT EXISTS orders (
             id                  SERIAL PRIMARY KEY,
-            so_number           VARCHAR(20) UNIQUE NOT NULL,
+            so_number           VARCHAR(50) UNIQUE NOT NULL,
             nuport_order_id     VARCHAR(50),
             wc_order_id         INTEGER,
             wc_order_number     VARCHAR(30),
@@ -68,7 +68,7 @@ TABLES = [
     ("financials", """
         CREATE TABLE IF NOT EXISTS financials (
             id                  SERIAL PRIMARY KEY,
-            so_number           VARCHAR(20) REFERENCES orders(so_number),
+            so_number           VARCHAR(50) REFERENCES orders(so_number),
             zoho_invoice_id     VARCHAR(50),
             pathao_batch_id     VARCHAR(50),
             pathao_waybill      VARCHAR(50),
@@ -90,7 +90,7 @@ TABLES = [
         CREATE TABLE IF NOT EXISTS pathao_waybills (
             id                  SERIAL PRIMARY KEY,
             waybill_number      VARCHAR(50) UNIQUE NOT NULL,
-            so_number           VARCHAR(20) REFERENCES orders(so_number),
+            so_number           VARCHAR(50) REFERENCES orders(so_number),
             pathao_batch_id     VARCHAR(50),
             current_status      VARCHAR(50),
             previous_status     VARCHAR(50),
@@ -184,7 +184,7 @@ TABLES = [
     ("order_items", """
         CREATE TABLE IF NOT EXISTS order_items (
             id                   SERIAL PRIMARY KEY,
-            so_number            VARCHAR(20) REFERENCES orders(so_number),
+            so_number            VARCHAR(50) REFERENCES orders(so_number),
             sku                  VARCHAR(100),
             product_name         VARCHAR(300),
             size                 VARCHAR(50),
