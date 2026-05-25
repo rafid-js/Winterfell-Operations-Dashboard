@@ -84,10 +84,7 @@ def _parse_attr(attr_str):
 SQL_CUSTOMER = """
     INSERT INTO customers (phone, name, address, updated_at)
     VALUES %s
-    ON CONFLICT (phone) DO UPDATE SET
-        name       = COALESCE(EXCLUDED.name,    customers.name),
-        address    = COALESCE(EXCLUDED.address, customers.address),
-        updated_at = EXCLUDED.updated_at
+    ON CONFLICT (phone) DO NOTHING
 """
 
 SQL_ORDER = """
@@ -98,21 +95,7 @@ SQL_ORDER = """
         collected_amount, pathao_waybill,
         order_date, shipped_date, delivered_date, updated_at
     ) VALUES %s
-    ON CONFLICT (so_number) DO UPDATE SET
-        nuport_status    = COALESCE(EXCLUDED.nuport_status,    orders.nuport_status),
-        source_channel   = COALESCE(EXCLUDED.source_channel,   orders.source_channel),
-        customer_name    = COALESCE(EXCLUDED.customer_name,    orders.customer_name),
-        customer_phone   = COALESCE(EXCLUDED.customer_phone,   orders.customer_phone),
-        wc_order_number  = COALESCE(EXCLUDED.wc_order_number,  orders.wc_order_number),
-        product_total    = COALESCE(EXCLUDED.product_total,    orders.product_total),
-        delivery_fee     = COALESCE(EXCLUDED.delivery_fee,     orders.delivery_fee),
-        discount_amount  = COALESCE(EXCLUDED.discount_amount,  orders.discount_amount),
-        total_receivable = COALESCE(EXCLUDED.total_receivable, orders.total_receivable),
-        collected_amount = COALESCE(EXCLUDED.collected_amount, orders.collected_amount),
-        pathao_waybill   = COALESCE(EXCLUDED.pathao_waybill,   orders.pathao_waybill),
-        shipped_date     = COALESCE(EXCLUDED.shipped_date,     orders.shipped_date),
-        delivered_date   = COALESCE(EXCLUDED.delivered_date,   orders.delivered_date),
-        updated_at       = EXCLUDED.updated_at
+    ON CONFLICT (so_number) DO NOTHING
 """
 
 SQL_ITEM = """
@@ -121,12 +104,7 @@ SQL_ITEM = """
         quantity, unit_price, total_price, item_discount, price_after_discount
     ) VALUES %s
     ON CONFLICT (so_number, sku, COALESCE(size,''), COALESCE(color,''))
-    DO UPDATE SET
-        quantity             = EXCLUDED.quantity,
-        unit_price           = EXCLUDED.unit_price,
-        total_price          = EXCLUDED.total_price,
-        item_discount        = EXCLUDED.item_discount,
-        price_after_discount = EXCLUDED.price_after_discount
+    DO NOTHING
 """
 
 SQL_LINK = """
