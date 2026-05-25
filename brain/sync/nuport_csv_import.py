@@ -8,6 +8,7 @@ Usage:
   python -m sync.nuport_csv_import --file "C:\\path\\to\\nuport_orders.csv"
 
 Safe to re-run — all upserts use ON CONFLICT DO UPDATE / DO NOTHING.
+Batches all inserts for speed (3 round trips total, not 50k+).
 """
 import sys
 import csv
@@ -18,6 +19,8 @@ from sqlalchemy import text
 
 sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
 from db import get_connection
+
+BATCH = 500
 
 
 # ── Parsers ───────────────────────────────────────────────────────────────────
@@ -79,13 +82,12 @@ UPSERT_CUSTOMER = text("""
         name       = COALESCE(EXCLUDED.name,    customers.name),
         address    = COALESCE(EXCLUDED.address, customers.address),
         updated_at = NOW()
-    RETURNING id
 """)
 
 UPSERT_ORDER = text("""
     INSERT INTO orders (
         so_number, nuport_status, source_channel,
-        customer_id, customer_name, customer_phone,
+        customer_name, customer_phone,
         wc_order_number,
         product_total, delivery_fee, discount_amount, total_receivable,
         collected_amount,
@@ -94,7 +96,7 @@ UPSERT_ORDER = text("""
         updated_at
     ) VALUES (
         :so_number, :nuport_status, :source_channel,
-        :customer_id, :customer_name, :customer_phone,
+        :customer_name, :customer_phone,
         :wc_order_number,
         :product_total, :delivery_fee, :discount_amount, :total_receivable,
         :collected_amount,
@@ -105,7 +107,6 @@ UPSERT_ORDER = text("""
     ON CONFLICT (so_number) DO UPDATE SET
         nuport_status    = COALESCE(EXCLUDED.nuport_status,    orders.nuport_status),
         source_channel   = COALESCE(EXCLUDED.source_channel,   orders.source_channel),
-        customer_id      = COALESCE(EXCLUDED.customer_id,      orders.customer_id),
         customer_name    = COALESCE(EXCLUDED.customer_name,    orders.customer_name),
         customer_phone   = COALESCE(EXCLUDED.customer_phone,   orders.customer_phone),
         wc_order_number  = COALESCE(EXCLUDED.wc_order_number,  orders.wc_order_number),
@@ -137,8 +138,16 @@ UPSERT_ITEM = text("""
         price_after_discount = EXCLUDED.price_after_discount
 """)
 
+LINK_CUSTOMER_IDS = text("""
+    UPDATE orders o
+    SET customer_id = c.id
+    FROM customers c
+    WHERE o.customer_phone = c.phone
+      AND o.customer_id IS NULL
+""")
 
-# ── Import ────────────────────────────────────────────────────────────────────
+
+# ── CSV load ──────────────────────────────────────────────────────────────────
 
 def load_csv(path: str) -> dict:
     """Read CSV and group rows by Invoice (SO number)."""
@@ -155,7 +164,6 @@ def load_csv(path: str) -> dict:
             dialect = csv.excel
         reader = csv.DictReader(f, dialect=dialect)
         print(f"  Detected delimiter: {repr(dialect.delimiter)}")
-        print(f"  Columns: {reader.fieldnames}\n")
         for row in reader:
             total_rows += 1
             so = (row.get('Invoice') or '').strip()
@@ -164,111 +172,119 @@ def load_csv(path: str) -> dict:
                 continue
             groups[so].append(row)
 
-    print(f"  {total_rows} rows read  |  {len(groups)} unique orders  |  {skipped} rows skipped (no Invoice)")
+    print(f"  {total_rows} rows  |  {len(groups)} unique orders  |  {skipped} skipped (no Invoice)\n")
     return groups
 
 
-def process(groups: dict):
-    orders_ok = orders_err = 0
-    items_ok = items_err = 0
-    customers_ok = 0
+# ── Build records ─────────────────────────────────────────────────────────────
 
-    with get_connection() as conn:
-        for idx, (so_number, rows) in enumerate(groups.items(), 1):
-            first = rows[0]
+def build_records(groups: dict):
+    customers = {}   # phone → dict (deduplicated)
+    orders    = []
+    items     = []
 
-            # ── Customer ──────────────────────────────────────────
-            phone = (first.get('Customer Phone Number') or '').strip()
-            customer_id = None
-            if phone:
-                try:
-                    cust = {
-                        'phone':   phone,
-                        'name':    (first.get('Customer Name') or '').strip() or None,
-                        'address': (first.get('Customer Address') or '').strip() or None,
-                    }
-                    row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
-                    customer_id = row[0] if row else None
-                    customers_ok += 1
-                except Exception as e:
-                    print(f"  ⚠ Customer {phone}: {e}")
+    for so_number, rows in groups.items():
+        first = rows[0]
+        phone = (first.get('Customer Phone Number') or '').strip() or None
 
-            # ── Order ─────────────────────────────────────────────
-            sales_amount  = _float(first.get('Sales Amount'))
-            delivery_fee  = _float(first.get('Delivery Fee'))
-            order_discount = _float(first.get('Order Discount'))
-            paid_amount   = _float(first.get('Payments/Paid Amount'))
-            wc_raw        = (first.get('Website Order ID') or '').strip() or None
-
-            total_recv = None
-            if sales_amount is not None and delivery_fee is not None:
-                total_recv = round(
-                    sales_amount + delivery_fee - (order_discount or 0), 2
-                )
-
-            order = {
-                'so_number':        so_number,
-                'nuport_status':    (first.get('Status') or '').strip() or None,
-                'source_channel':   (first.get('Order Source') or '').strip() or None,
-                'customer_id':      customer_id,
-                'customer_name':    (first.get('Customer Name') or '').strip() or None,
-                'customer_phone':   phone or None,
-                'wc_order_number':  wc_raw,
-                'product_total':    sales_amount,
-                'delivery_fee':     delivery_fee,
-                'discount_amount':  order_discount,
-                'total_receivable': total_recv,
-                'collected_amount': paid_amount,
-                'pathao_waybill':   (first.get('Delivery ID') or '').strip() or None,
-                'order_date':       _dt(first.get('Creation Date')),
-                'shipped_date':     _dt(first.get('Shipped At')),
-                'delivered_date':   _dt(first.get('Delivered At')),
+        if phone and phone not in customers:
+            customers[phone] = {
+                'phone':   phone,
+                'name':    (first.get('Customer Name') or '').strip() or None,
+                'address': (first.get('Customer Address') or '').strip() or None,
             }
 
-            try:
-                conn.execute(UPSERT_ORDER, order)
-                orders_ok += 1
-            except Exception as e:
-                orders_err += 1
-                print(f"  ✗ Order {so_number}: {e}")
-                conn.rollback()
+        sales_amount   = _float(first.get('Sales Amount'))
+        delivery_fee   = _float(first.get('Delivery Fee'))
+        order_discount = _float(first.get('Order Discount'))
+        total_recv = None
+        if sales_amount is not None and delivery_fee is not None:
+            total_recv = round(sales_amount + delivery_fee - (order_discount or 0), 2)
+
+        orders.append({
+            'so_number':        so_number,
+            'nuport_status':    (first.get('Status') or '').strip() or None,
+            'source_channel':   (first.get('Order Source') or '').strip() or None,
+            'customer_name':    (first.get('Customer Name') or '').strip() or None,
+            'customer_phone':   phone,
+            'wc_order_number':  (first.get('Website Order ID') or '').strip() or None,
+            'product_total':    sales_amount,
+            'delivery_fee':     delivery_fee,
+            'discount_amount':  order_discount,
+            'total_receivable': total_recv,
+            'collected_amount': _float(first.get('Payments/Paid Amount')),
+            'pathao_waybill':   (first.get('Delivery ID') or '').strip() or None,
+            'order_date':       _dt(first.get('Creation Date')),
+            'shipped_date':     _dt(first.get('Shipped At')),
+            'delivered_date':   _dt(first.get('Delivered At')),
+        })
+
+        for row in rows:
+            sku = (row.get('Product SKU') or '').strip()
+            if not sku:
                 continue
+            size, color = _parse_attr(row.get('Product Attributes'))
+            items.append({
+                'so_number':            so_number,
+                'sku':                  sku,
+                'product_name':         (row.get('Product Name') or '').strip() or None,
+                'size':                 size,
+                'color':                color,
+                'quantity':             _int(row.get('Product Qty')) or 1,
+                'unit_price':           _float(row.get('Unit Price')),
+                'total_price':          _float(row.get('Total Price')),
+                'item_discount':        _float(row.get('Product Discount')) or 0,
+                'price_after_discount': _float(row.get('Price After Discount')),
+            })
 
-            # ── Order items ───────────────────────────────────────
-            for row in rows:
-                sku = (row.get('Product SKU') or '').strip()
-                if not sku:
-                    continue
-                size, color = _parse_attr(row.get('Product Attributes'))
-                item = {
-                    'so_number':            so_number,
-                    'sku':                  sku,
-                    'product_name':         (row.get('Product Name') or '').strip() or None,
-                    'size':                 size,
-                    'color':                color,
-                    'quantity':             _int(row.get('Product Qty')) or 1,
-                    'unit_price':           _float(row.get('Unit Price')),
-                    'total_price':          _float(row.get('Total Price')),
-                    'item_discount':        _float(row.get('Product Discount')) or 0,
-                    'price_after_discount': _float(row.get('Price After Discount')),
-                }
-                try:
-                    conn.execute(UPSERT_ITEM, item)
-                    items_ok += 1
-                except Exception as e:
-                    items_err += 1
-                    print(f"  ✗ Item {so_number}/{sku}: {e}")
+    return list(customers.values()), orders, items
 
+
+# ── Batch upsert ──────────────────────────────────────────────────────────────
+
+def _run_batches(conn, sql, records, label):
+    total = len(records)
+    ok = err = 0
+    for i in range(0, total, BATCH):
+        batch = records[i:i + BATCH]
+        try:
+            conn.execute(sql, batch)
             conn.commit()
+            ok += len(batch)
+        except Exception as e:
+            conn.rollback()
+            err += len(batch)
+            print(f"  ✗ {label} batch {i}-{i+len(batch)}: {e}")
+        pct = min(i + BATCH, total) / total * 100
+        print(f"  {label}: {min(i+BATCH, total)}/{total} ({pct:.0f}%)", end='\r')
+    print()
+    return ok, err
 
-            if idx % 1000 == 0:
-                pct = idx / len(groups) * 100
-                print(f"  ... {idx}/{len(groups)} orders ({pct:.0f}%)")
 
-    print(f"\n── Summary ──")
-    print(f"  customers upserted : {customers_ok}")
-    print(f"  orders    upserted : {orders_ok}   errors: {orders_err}")
-    print(f"  items     upserted : {items_ok}   errors: {items_err}")
+def process(groups: dict):
+    print("Building records in memory...")
+    customers, orders, items = build_records(groups)
+    print(f"  {len(customers)} customers  |  {len(orders)} orders  |  {len(items)} items\n")
+
+    with get_connection() as conn:
+        print("Upserting customers...")
+        c_ok, c_err = _run_batches(conn, UPSERT_CUSTOMER, customers, 'customers')
+
+        print("Upserting orders...")
+        o_ok, o_err = _run_batches(conn, UPSERT_ORDER, orders, 'orders')
+
+        print("Upserting order items...")
+        i_ok, i_err = _run_batches(conn, UPSERT_ITEM, items, 'items')
+
+        print("Linking customer IDs to orders...")
+        conn.execute(LINK_CUSTOMER_IDS)
+        conn.commit()
+        print("  ✓ done\n")
+
+    print("── Summary ──")
+    print(f"  customers : {c_ok} ok  {c_err} errors")
+    print(f"  orders    : {o_ok} ok  {o_err} errors")
+    print(f"  items     : {i_ok} ok  {i_err} errors")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
