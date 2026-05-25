@@ -30,14 +30,26 @@ MIGRATIONS = [
      "ALTER TABLE order_items ALTER COLUMN so_number TYPE VARCHAR(50)"),
     ("financials", "so_number",
      "ALTER TABLE financials ALTER COLUMN so_number TYPE VARCHAR(50)"),
-    ("pathao_waybills", "so_number",
-     "ALTER TABLE pathao_waybills ALTER COLUMN so_number TYPE VARCHAR(50)"),
-    ("orders", "so_number",
-     "ALTER TABLE orders ALTER COLUMN so_number TYPE VARCHAR(50)"),
 
     # Widen wc_order_number to be safe
     ("orders", "wc_order_number",
      "ALTER TABLE orders ALTER COLUMN wc_order_number TYPE VARCHAR(50)"),
+]
+
+# pathao_waybills.so_number requires dropping the view that depends on it
+WIDEN_SO_WITH_VIEW = [
+    "DROP VIEW IF EXISTS pathao_loss_tracker",
+    "ALTER TABLE pathao_waybills ALTER COLUMN so_number TYPE VARCHAR(50)",
+    "ALTER TABLE orders ALTER COLUMN so_number TYPE VARCHAR(50)",
+    """CREATE OR REPLACE VIEW pathao_loss_tracker AS
+        SELECT
+            w.waybill_number, w.so_number, w.current_status,
+            w.days_in_transit, w.is_lost, w.loss_value,
+            w.compensation_filed, w.anomaly_flag, w.anomaly_reason,
+            o.customer_name, o.product_total
+        FROM pathao_waybills w
+        LEFT JOIN orders o ON w.so_number = o.so_number
+        WHERE w.anomaly_flag = TRUE OR w.is_lost = TRUE""",
 ]
 
 INDEXES = [
@@ -89,6 +101,11 @@ def main():
             print(f"  ✓ index {name}")
 
         print()
+        for sql in WIDEN_SO_WITH_VIEW:
+            conn.execute(text(sql))
+            conn.commit()
+        print("  ✓ orders/pathao_waybills.so_number widened + view recreated")
+
         for name, sql in NEW_TABLES:
             conn.execute(text(sql))
             conn.commit()
