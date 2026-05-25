@@ -41,6 +41,7 @@ TABLES = [
             so_number           VARCHAR(20) UNIQUE NOT NULL,
             nuport_order_id     VARCHAR(50),
             wc_order_id         INTEGER,
+            wc_order_number     VARCHAR(30),
             zoho_invoice_id     VARCHAR(50),
             pathao_waybill      VARCHAR(50),
             pathao_batch_id     VARCHAR(50),
@@ -128,6 +129,7 @@ TABLES = [
             reorder_level       INTEGER DEFAULT 10,
             reorder_quantity    INTEGER DEFAULT 50,
             nuport_product_id   VARCHAR(50),
+            image_url           TEXT,
             wc_product_id       INTEGER,
             wc_variation_id     INTEGER,
             zoho_item_id        VARCHAR(50),
@@ -201,6 +203,7 @@ TABLES = [
 
 INDEXES = [
     ("idx_orders_so",             "CREATE INDEX IF NOT EXISTS idx_orders_so ON orders(so_number)"),
+    ("idx_orders_wc_number",      "CREATE INDEX IF NOT EXISTS idx_orders_wc_number ON orders(wc_order_number)"),
     ("idx_orders_channel",        "CREATE INDEX IF NOT EXISTS idx_orders_channel ON orders(source_channel)"),
     ("idx_orders_status",         "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(nuport_status)"),
     ("idx_orders_date",           "CREATE INDEX IF NOT EXISTS idx_orders_date ON orders(order_date)"),
