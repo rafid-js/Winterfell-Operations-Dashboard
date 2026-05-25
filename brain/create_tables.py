@@ -181,6 +181,22 @@ TABLES = [
             created_at          TIMESTAMP DEFAULT NOW()
         )
     """),
+    ("order_items", """
+        CREATE TABLE IF NOT EXISTS order_items (
+            id                   SERIAL PRIMARY KEY,
+            so_number            VARCHAR(20) REFERENCES orders(so_number),
+            sku                  VARCHAR(100),
+            product_name         VARCHAR(300),
+            size                 VARCHAR(50),
+            color                VARCHAR(50),
+            quantity             INTEGER DEFAULT 1,
+            unit_price           NUMERIC(10,2),
+            total_price          NUMERIC(10,2),
+            item_discount        NUMERIC(10,2) DEFAULT 0,
+            price_after_discount NUMERIC(10,2),
+            created_at           TIMESTAMP DEFAULT NOW()
+        )
+    """),
     ("alerts_log", """
         CREATE TABLE IF NOT EXISTS alerts_log (
             id                  SERIAL PRIMARY KEY,
@@ -218,6 +234,11 @@ INDEXES = [
     ("idx_waybills_lost",         "CREATE INDEX IF NOT EXISTS idx_waybills_lost ON pathao_waybills(is_lost)"),
     ("idx_ad_spend_date",         "CREATE INDEX IF NOT EXISTS idx_ad_spend_date ON ad_spend(date)"),
     ("idx_knowledge_source",      "CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_base(source_type)"),
+    ("idx_order_items_so",        "CREATE INDEX IF NOT EXISTS idx_order_items_so ON order_items(so_number)"),
+    ("idx_order_items_sku",       "CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku)"),
+    ("idx_order_items_unique",
+     """CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_unique
+        ON order_items(so_number, sku, COALESCE(size,''), COALESCE(color,''))"""),
 ]
 
 VECTOR_INDEX = """

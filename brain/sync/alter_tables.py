@@ -25,6 +25,35 @@ INDEXES = [
      "CREATE INDEX IF NOT EXISTS idx_orders_wc_number ON orders(wc_order_number)"),
 ]
 
+NEW_TABLES = [
+    ("order_items", """
+        CREATE TABLE IF NOT EXISTS order_items (
+            id                   SERIAL PRIMARY KEY,
+            so_number            VARCHAR(20) REFERENCES orders(so_number),
+            sku                  VARCHAR(100),
+            product_name         VARCHAR(300),
+            size                 VARCHAR(50),
+            color                VARCHAR(50),
+            quantity             INTEGER DEFAULT 1,
+            unit_price           NUMERIC(10,2),
+            total_price          NUMERIC(10,2),
+            item_discount        NUMERIC(10,2) DEFAULT 0,
+            price_after_discount NUMERIC(10,2),
+            created_at           TIMESTAMP DEFAULT NOW()
+        )
+    """),
+]
+
+NEW_INDEXES = [
+    ("idx_order_items_so",
+     "CREATE INDEX IF NOT EXISTS idx_order_items_so ON order_items(so_number)"),
+    ("idx_order_items_sku",
+     "CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items(sku)"),
+    ("idx_order_items_unique",
+     """CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_unique
+        ON order_items(so_number, sku, COALESCE(size,''), COALESCE(color,''))"""),
+]
+
 
 def main():
     print("=== Brain — Alter Tables ===\n")
@@ -35,6 +64,17 @@ def main():
             print(f"  ✓ {table}.{col}")
 
         for name, sql in INDEXES:
+            conn.execute(text(sql))
+            conn.commit()
+            print(f"  ✓ index {name}")
+
+        print()
+        for name, sql in NEW_TABLES:
+            conn.execute(text(sql))
+            conn.commit()
+            print(f"  ✓ table {name}")
+
+        for name, sql in NEW_INDEXES:
             conn.execute(text(sql))
             conn.commit()
             print(f"  ✓ index {name}")
