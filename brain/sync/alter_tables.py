@@ -34,6 +34,12 @@ MIGRATIONS = [
     # Widen wc_order_number to be safe
     ("orders", "wc_order_number",
      "ALTER TABLE orders ALTER COLUMN wc_order_number TYPE VARCHAR(50)"),
+
+    # Widen sku columns — some SKUs exceed 100 chars
+    ("skus",          "sku", "ALTER TABLE skus ALTER COLUMN sku TYPE VARCHAR(200)"),
+    ("order_items",   "sku", "ALTER TABLE order_items ALTER COLUMN sku TYPE VARCHAR(200)"),
+    ("knowledge_base","related_sku", "ALTER TABLE knowledge_base ALTER COLUMN related_sku TYPE VARCHAR(200)"),
+    ("alerts_log",    "related_sku", "ALTER TABLE alerts_log ALTER COLUMN related_sku TYPE VARCHAR(200)"),
 ]
 
 # pathao_waybills.so_number requires dropping the view that depends on it

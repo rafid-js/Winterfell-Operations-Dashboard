@@ -117,7 +117,7 @@ TABLES = [
     ("skus", """
         CREATE TABLE IF NOT EXISTS skus (
             id                  SERIAL PRIMARY KEY,
-            sku                 VARCHAR(100) UNIQUE NOT NULL,
+            sku                 VARCHAR(200) UNIQUE NOT NULL,
             product_name        VARCHAR(300),
             category            VARCHAR(100),
             color               VARCHAR(50),
@@ -175,7 +175,7 @@ TABLES = [
             tags                TEXT[],
             sentiment           VARCHAR(20),
             related_so          VARCHAR(20),
-            related_sku         VARCHAR(100),
+            related_sku         VARCHAR(200),
             related_supplier    VARCHAR(200),
             embedding           vector(1536),
             created_at          TIMESTAMP DEFAULT NOW()
@@ -185,7 +185,7 @@ TABLES = [
         CREATE TABLE IF NOT EXISTS order_items (
             id                   SERIAL PRIMARY KEY,
             so_number            VARCHAR(50) REFERENCES orders(so_number),
-            sku                  VARCHAR(100),
+            sku                  VARCHAR(200),
             product_name         VARCHAR(300),
             size                 VARCHAR(50),
             color                VARCHAR(50),
@@ -205,7 +205,7 @@ TABLES = [
             title               VARCHAR(200),
             message             TEXT,
             related_so          VARCHAR(20),
-            related_sku         VARCHAR(100),
+            related_sku         VARCHAR(200),
             related_waybill     VARCHAR(50),
             data_snapshot       JSONB,
             resolved            BOOLEAN DEFAULT FALSE,
