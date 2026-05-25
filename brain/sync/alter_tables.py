@@ -82,6 +82,19 @@ INDEXES = [
 ]
 
 NEW_TABLES = [
+    ("sync_log", """
+        CREATE TABLE IF NOT EXISTS sync_log (
+            id              SERIAL PRIMARY KEY,
+            source          VARCHAR(30) NOT NULL,
+            sync_type       VARCHAR(30) NOT NULL,
+            started_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+            finished_at     TIMESTAMP,
+            last_record_at  TIMESTAMP,
+            records_synced  INTEGER DEFAULT 0,
+            status          VARCHAR(10) DEFAULT 'running',
+            error_msg       TEXT
+        )
+    """),
     ("order_items", """
         CREATE TABLE IF NOT EXISTS order_items (
             id                   SERIAL PRIMARY KEY,

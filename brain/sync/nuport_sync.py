@@ -22,6 +22,7 @@ sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
 
 from db import get_connection
 from apis.nuport import nuport
+from sync.sync_log import SyncLog
 
 
 # ── Field mappers ─────────────────────────────────────────────────────────────
@@ -209,6 +210,7 @@ UPSERT_ORDER = text("""
 
 def sync_products():
     print(f"\n=== Nuport Products → Brain SKUs  {datetime.now():%Y-%m-%d %H:%M} ===\n")
+    log = SyncLog('nuport', 'products')
     ok = skip = err = 0
 
     with get_connection() as conn:
@@ -230,15 +232,29 @@ def sync_products():
                 print(f"  ✗ {row.get('sku','?')}: {e}")
 
     print(f"\n── Summary ── upserted:{ok}  skipped(no SKU):{skip}  errors:{err}\n")
+    if err == 0:
+        log.finish(records_synced=ok)
+    else:
+        log.error(f"{err} errors during product sync")
 
 
 def sync_inventory(updated_from: str = None):
     print(f"\n=== Nuport Inventory → Brain SKUs  {datetime.now():%Y-%m-%d %H:%M} ===\n")
-    if updated_from:
-        print(f"  Incremental: updatedFrom {updated_from}")
+    log = SyncLog('nuport', 'inventory')
+
+    # Use last successful sync date if no manual override
+    if not updated_from:
+        since = log.last_record_at()
+        if since:
+            updated_from = since.strftime('%Y-%m-%d')
+            print(f"  Incremental: updatedFrom {updated_from} (last sync)")
+        else:
+            print("  Full sync — no previous sync found")
     else:
-        print("  Full sync (page=-1, all records)")
+        print(f"  Incremental: updatedFrom {updated_from} (manual)")
+
     ok = skip = err = 0
+    newest_dt = None
 
     with get_connection() as conn:
         items = nuport.get_all_inventory(updated_from=updated_from)
@@ -260,6 +276,10 @@ def sync_inventory(updated_from: str = None):
                 print(f"  ✗ {row.get('sku','?')}: {e}")
 
     print(f"\n── Summary ── upserted:{ok}  skipped(no SKU):{skip}  errors:{err}\n")
+    if err == 0:
+        log.finish(records_synced=ok, last_record_at=datetime.now())
+    else:
+        log.error(f"{err} errors during inventory sync")
 
 
 def sync_single_order(so_number: str):
