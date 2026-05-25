@@ -18,6 +18,12 @@ MIGRATIONS = [
     # Product image URL (pulled from WooCommerce)
     ("skus",    "image_url",
      "ALTER TABLE skus ADD COLUMN IF NOT EXISTS image_url TEXT"),
+
+    # Widen phone columns — some numbers exceed 20 chars with country codes
+    ("customers", "phone",
+     "ALTER TABLE customers ALTER COLUMN phone TYPE VARCHAR(50)"),
+    ("orders", "customer_phone",
+     "ALTER TABLE orders ALTER COLUMN customer_phone TYPE VARCHAR(50)"),
 ]
 
 INDEXES = [

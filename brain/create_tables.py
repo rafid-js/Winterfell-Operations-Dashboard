@@ -16,7 +16,7 @@ TABLES = [
     ("customers", """
         CREATE TABLE IF NOT EXISTS customers (
             id                  SERIAL PRIMARY KEY,
-            phone               VARCHAR(20) UNIQUE NOT NULL,
+            phone               VARCHAR(50) UNIQUE NOT NULL,
             email               VARCHAR(200),
             name                VARCHAR(200),
             address             TEXT,
@@ -51,7 +51,7 @@ TABLES = [
             payment_status      VARCHAR(30),
             customer_id         INTEGER REFERENCES customers(id),
             customer_name       VARCHAR(200),
-            customer_phone      VARCHAR(20),
+            customer_phone      VARCHAR(50),
             product_total       NUMERIC(12,2),
             delivery_fee        NUMERIC(12,2),
             discount_amount     NUMERIC(12,2) DEFAULT 0,
