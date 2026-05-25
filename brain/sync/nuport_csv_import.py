@@ -20,7 +20,7 @@ import psycopg2.extras
 sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
 from db import engine
 
-BATCH = 2000
+BATCH = 200
 NOW   = datetime.now()
 
 
@@ -243,15 +243,34 @@ def build_tuples(groups: dict):
 
 # ── Bulk upsert ───────────────────────────────────────────────────────────────
 
-def _bulk(cur, sql, tuples, label):
+def _bulk(sql, tuples, label):
+    """Upsert in small batches, reconnecting on SSL drop."""
     total = len(tuples)
     ok = 0
-    for i in range(0, total, BATCH):
+    i = 0
+    while i < total:
         batch = tuples[i:i + BATCH]
-        psycopg2.extras.execute_values(cur, sql, batch, page_size=BATCH)
-        ok += len(batch)
-        pct = ok / total * 100
-        print(f"  {label}: {ok}/{total} ({pct:.0f}%)", end='\r')
+        raw = engine.raw_connection()
+        try:
+            cur = raw.cursor()
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=BATCH)
+            raw.commit()
+            cur.close()
+            ok += len(batch)
+            i += BATCH
+            pct = ok / total * 100
+            print(f"  {label}: {ok}/{total} ({pct:.0f}%)", end='\r')
+        except Exception as e:
+            try:
+                raw.rollback()
+            except Exception:
+                pass
+            print(f"\n  ⚠ batch {i}-{i+len(batch)} failed ({e}), retrying...")
+        finally:
+            try:
+                raw.close()
+            except Exception:
+                pass
     print(f"  {label}: {ok}/{total} (100%) ✓")
     return ok
 
@@ -261,33 +280,25 @@ def process(groups: dict):
     customers, orders, items = build_tuples(groups)
     print(f"  {len(customers)} customers | {len(orders)} orders | {len(items)} items\n")
 
+    print("Upserting customers...")
+    c_ok = _bulk(SQL_CUSTOMER, customers, 'customers')
+
+    print("Upserting orders...")
+    o_ok = _bulk(SQL_ORDER, orders, 'orders')
+
+    print("Upserting order items...")
+    i_ok = _bulk(SQL_ITEM, items, 'items')
+
+    print("Linking customer IDs to orders...")
     raw = engine.raw_connection()
     try:
         cur = raw.cursor()
-
-        print("Upserting customers...")
-        c_ok = _bulk(cur, SQL_CUSTOMER, customers, 'customers')
-        raw.commit()
-
-        print("Upserting orders...")
-        o_ok = _bulk(cur, SQL_ORDER, orders, 'orders')
-        raw.commit()
-
-        print("Upserting order items...")
-        i_ok = _bulk(cur, SQL_ITEM, items, 'items')
-        raw.commit()
-
-        print("Linking customer IDs to orders...")
         cur.execute(SQL_LINK)
         raw.commit()
-        print("  ✓ done\n")
-
         cur.close()
-    except Exception as e:
-        raw.rollback()
-        raise e
     finally:
         raw.close()
+    print("  ✓ done\n")
 
     print("── Summary ──")
     print(f"  customers : {c_ok}")
