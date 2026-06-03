@@ -34,17 +34,23 @@ class WooCommerceClient:
 
     # ── Orders ────────────────────────────────────────────────────────────────
 
+    # Only fetch the fields we actually use — reduces response size and WC query cost
+    _ORDER_FIELDS = (
+        'id,number,status,billing,line_items,'
+        'date_created,date_modified,'
+        'total,shipping_total,discount_total,customer_id'
+    )
+
     def list_orders(self, page: int = 1, per_page: int = 100,
                     modified_after: str = None) -> list:
-        """Return one page of orders (status=any).
-
-        Args:
-            page: 1-based page number.
-            per_page: Records per page (max 100).
-            modified_after: ISO 8601 datetime string; only orders modified
-                            after this date are returned.
-        """
-        params = {'status': 'any', 'page': page, 'per_page': per_page}
+        params = {
+            'status':   'any',
+            'page':     page,
+            'per_page': per_page,
+            'orderby':  'id',
+            'order':    'asc',
+            '_fields':  self._ORDER_FIELDS,
+        }
         if modified_after:
             params['modified_after'] = modified_after
         return self._get('/orders', params)
