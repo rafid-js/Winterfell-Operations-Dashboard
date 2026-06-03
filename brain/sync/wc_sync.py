@@ -4,9 +4,14 @@ WooCommerce → Brain sync.
 Modes:
   python -m sync.wc_sync --orders       sync orders + line items + customers
   python -m sync.wc_sync --products     sync product image URLs → skus table
+  python -m sync.wc_sync --reconcile    merge WC-XXXX duplicates into Nuport orders (run once)
 
 Incremental by default — reads last_record_at from sync_log.
 Universal keys: phone (customers), WC-{id} or matched so_number (orders), sku (products).
+
+Reconciliation: for each WC order, if the Brain already has an order with matching
+wc_order_id or wc_order_number (from Nuport), we update that row instead of creating
+a duplicate WC-XXXX row.
 """
 import sys
 import argparse
@@ -96,9 +101,9 @@ def map_order(order: dict, customer_id: int | None) -> dict:
     }
 
 
-def map_items(order: dict) -> list[dict]:
+def map_items(order: dict, so_number: str | None = None) -> list[dict]:
     items = []
-    so = f"WC-{order.get('id')}"
+    so = so_number or f"WC-{order.get('id')}"
     for li in (order.get('line_items') or []):
         sku = _str(li.get('sku'))
         if not sku:
@@ -183,6 +188,23 @@ UPDATE_SKU_IMAGE = text("""
     WHERE sku = :sku AND (image_url IS NULL OR image_url != :image_url)
 """)
 
+FIND_NUPORT_ORDER = text("""
+    SELECT so_number FROM orders
+    WHERE (wc_order_id = :wc_id OR wc_order_number = :wc_num)
+      AND so_number NOT LIKE 'WC-%'
+    LIMIT 1
+""")
+
+UPDATE_WC_FIELDS = text("""
+    UPDATE orders SET
+        wc_order_id     = :wc_id,
+        wc_order_number = COALESCE(wc_order_number, :wc_num),
+        wc_status       = :wc_status,
+        source_channel  = COALESCE(source_channel, 'woocommerce'),
+        updated_at      = NOW()
+    WHERE so_number = :so_number
+""")
+
 
 # ── Sync functions ────────────────────────────────────────────────────────────
 
@@ -200,9 +222,14 @@ def sync_orders():
     ok = err = 0
     newest_dt = since
 
+    merged = 0
+
     with get_connection() as conn:
         for order in wc.iter_orders(modified_after=modified_after):
             try:
+                wc_id  = order.get('id')
+                wc_num = str(order.get('number') or wc_id)
+
                 # Customer
                 cust = map_customer(order)
                 customer_id = None
@@ -210,12 +237,28 @@ def sync_orders():
                     row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
                     customer_id = row[0] if row else None
 
-                # Order
-                o = map_order(order, customer_id)
-                conn.execute(UPSERT_ORDER, o)
+                # Check if Nuport already has this order
+                existing = conn.execute(FIND_NUPORT_ORDER, {
+                    'wc_id': wc_id, 'wc_num': wc_num
+                }).mappings().one_or_none()
 
-                # Items
-                for item in map_items(order):
+                if existing:
+                    # Merge WC data into existing Nuport order
+                    so_number = existing['so_number']
+                    conn.execute(UPDATE_WC_FIELDS, {
+                        'wc_id': wc_id, 'wc_num': wc_num,
+                        'wc_status': _str(order.get('status')),
+                        'so_number': so_number,
+                    })
+                    merged += 1
+                else:
+                    # WC-only order (Messenger/Instagram orders not in WC, WC-only orders)
+                    so_number = f'WC-{wc_id}'
+                    o = map_order(order, customer_id)
+                    conn.execute(UPSERT_ORDER, o)
+
+                # Items always use the resolved so_number
+                for item in map_items(order, so_number):
                     conn.execute(UPSERT_ITEM, item)
 
                 conn.commit()
@@ -229,12 +272,14 @@ def sync_orders():
                         newest_dt = mod_dt
 
                 if ok % 100 == 0:
-                    print(f"  ... {ok} orders synced")
+                    print(f"  ... {ok} orders processed ({merged} merged with Nuport)")
 
             except Exception as e:
                 err += 1
                 conn.rollback()
                 print(f"  ✗ WC-{order.get('id')}: {e}")
+
+    print(f"  Merged into Nuport orders: {merged}  |  New WC-only orders: {ok - merged - err}")
 
     print(f"\n── Summary ── synced:{ok}  errors:{err}\n")
     if err == 0:
@@ -286,16 +331,82 @@ def sync_products():
     log.finish(records_synced=ok, last_record_at=datetime.now())
 
 
+def reconcile_duplicates():
+    """
+    One-time cleanup: find WC-XXXX rows that duplicate a Nuport order,
+    move their items to the Nuport so_number, then delete the WC-XXXX row.
+    Safe to re-run.
+    """
+    print(f"\n=== WC Reconciliation — merge WC-XXXX duplicates  {datetime.now():%Y-%m-%d %H:%M} ===\n")
+
+    with get_connection() as conn:
+        # Find WC-XXXX rows that have a matching Nuport order
+        pairs = conn.execute(text("""
+            SELECT wc.so_number AS wc_so, np.so_number AS np_so
+            FROM orders wc
+            JOIN orders np ON (
+                (wc.wc_order_id IS NOT NULL AND wc.wc_order_id = np.wc_order_id)
+                OR
+                (wc.wc_order_number IS NOT NULL AND wc.wc_order_number = np.wc_order_number)
+            )
+            WHERE wc.so_number LIKE 'WC-%'
+              AND np.so_number NOT LIKE 'WC-%'
+        """)).mappings().all()
+
+        print(f"  Found {len(pairs)} WC-XXXX duplicates to merge\n")
+        merged = 0
+
+        for pair in pairs:
+            wc_so = pair['wc_so']
+            np_so = pair['np_so']
+
+            # Stamp WC fields onto Nuport order
+            conn.execute(text("""
+                UPDATE orders np_o SET
+                    wc_order_id     = wc_o.wc_order_id,
+                    wc_order_number = COALESCE(np_o.wc_order_number, wc_o.wc_order_number),
+                    wc_status       = wc_o.wc_status,
+                    updated_at      = NOW()
+                FROM orders wc_o
+                WHERE np_o.so_number = :np_so AND wc_o.so_number = :wc_so
+            """), {'np_so': np_so, 'wc_so': wc_so})
+
+            # Move items from WC-XXXX → Nuport so_number (skip conflicts)
+            conn.execute(text("""
+                INSERT INTO order_items (so_number, sku, product_name, size, color,
+                    quantity, unit_price, total_price, item_discount, price_after_discount)
+                SELECT :np_so, sku, product_name, size, color,
+                    quantity, unit_price, total_price, item_discount, price_after_discount
+                FROM order_items
+                WHERE so_number = :wc_so
+                ON CONFLICT (so_number, sku, COALESCE(size,''), COALESCE(color,''))
+                DO NOTHING
+            """), {'np_so': np_so, 'wc_so': wc_so})
+
+            # Delete WC-XXXX items and order
+            conn.execute(text("DELETE FROM order_items WHERE so_number = :s"), {'s': wc_so})
+            conn.execute(text("DELETE FROM orders WHERE so_number = :s"), {'s': wc_so})
+            conn.commit()
+
+            print(f"  ✓ {wc_so} → {np_so}")
+            merged += 1
+
+    print(f"\n  ✓ Merged {merged} duplicate orders\n")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='WooCommerce → Brain sync')
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument('--orders',   action='store_true', help='Sync orders, customers, line items')
-    g.add_argument('--products', action='store_true', help='Sync product image URLs')
+    g.add_argument('--orders',    action='store_true', help='Sync orders, customers, line items')
+    g.add_argument('--products',  action='store_true', help='Sync product image URLs')
+    g.add_argument('--reconcile', action='store_true', help='Merge WC-XXXX duplicates into Nuport orders')
     args = ap.parse_args()
 
     if args.orders:
         sync_orders()
     elif args.products:
         sync_products()
+    elif args.reconcile:
+        reconcile_duplicates()
