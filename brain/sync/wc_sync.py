@@ -188,13 +188,6 @@ UPDATE_SKU_IMAGE = text("""
     WHERE sku = :sku AND (image_url IS NULL OR image_url != :image_url)
 """)
 
-FIND_NUPORT_ORDER = text("""
-    SELECT so_number FROM orders
-    WHERE (wc_order_id = :wc_id OR wc_order_number = :wc_num)
-      AND so_number NOT LIKE 'WC-%'
-    LIMIT 1
-""")
-
 UPDATE_WC_FIELDS = text("""
     UPDATE orders SET
         wc_order_id     = :wc_id,
@@ -219,10 +212,29 @@ def sync_orders():
     else:
         print("  Full sync — no previous sync found")
 
-    ok = err = 0
-    newest_dt = since
+    # Pre-load all known wc_order_numbers from Nuport orders into memory.
+    # This replaces one-per-order SQL lookups with O(1) dict gets.
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT so_number, wc_order_id, wc_order_number
+            FROM orders
+            WHERE so_number NOT LIKE 'WC-%'
+              AND (wc_order_id IS NOT NULL OR wc_order_number IS NOT NULL)
+        """)).mappings().all()
 
-    merged = 0
+    nuport_by_wc_id  = {}   # int wc_order_id  → so_number
+    nuport_by_wc_num = {}   # str wc_order_number → so_number
+    for r in rows:
+        if r['wc_order_id']:
+            nuport_by_wc_id[r['wc_order_id']] = r['so_number']
+        if r['wc_order_number']:
+            nuport_by_wc_num[str(r['wc_order_number'])] = r['so_number']
+
+    print(f"  Nuport lookup loaded: {len(nuport_by_wc_num)} orders with wc_order_number\n")
+
+    ok = err = merged = 0
+    newest_dt = since
+    BATCH_SIZE = 50
 
     with get_connection() as conn:
         for order in wc.iter_orders(modified_after=modified_after):
@@ -237,14 +249,10 @@ def sync_orders():
                     row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
                     customer_id = row[0] if row else None
 
-                # Check if Nuport already has this order
-                existing = conn.execute(FIND_NUPORT_ORDER, {
-                    'wc_id': wc_id, 'wc_num': wc_num
-                }).mappings().one_or_none()
+                # In-memory lookup — no extra SQL per order
+                so_number = nuport_by_wc_id.get(wc_id) or nuport_by_wc_num.get(wc_num)
 
-                if existing:
-                    # Merge WC data into existing Nuport order
-                    so_number = existing['so_number']
+                if so_number:
                     conn.execute(UPDATE_WC_FIELDS, {
                         'wc_id': wc_id, 'wc_num': wc_num,
                         'wc_status': _str(order.get('status')),
@@ -252,34 +260,39 @@ def sync_orders():
                     })
                     merged += 1
                 else:
-                    # WC-only order (Messenger/Instagram orders not in WC, WC-only orders)
                     so_number = f'WC-{wc_id}'
                     o = map_order(order, customer_id)
                     conn.execute(UPSERT_ORDER, o)
 
-                # Items always use the resolved so_number
                 for item in map_items(order, so_number):
                     conn.execute(UPSERT_ITEM, item)
 
-                conn.commit()
                 ok += 1
 
-                # Track newest modified date for sync_log
                 mod = order.get('date_modified')
                 if mod:
                     mod_dt = datetime.fromisoformat(mod[:19])
                     if newest_dt is None or mod_dt > newest_dt:
                         newest_dt = mod_dt
 
-                if ok % 100 == 0:
-                    print(f"  ... {ok} orders processed ({merged} merged with Nuport)")
+                if ok % BATCH_SIZE == 0:
+                    conn.commit()
+                if ok % 200 == 0:
+                    print(f"  ... {ok} orders processed ({merged} merged, {ok-merged} WC-only)")
 
             except Exception as e:
                 err += 1
                 conn.rollback()
                 print(f"  ✗ WC-{order.get('id')}: {e}")
 
-    print(f"  Merged into Nuport orders: {merged}  |  New WC-only orders: {ok - merged - err}")
+        conn.commit()
+
+    print(f"\n── Summary ── total:{ok}  merged:{merged}  WC-only:{ok-merged-err}  errors:{err}")
+    print(f"  Merge rate: {round(merged/ok*100)}%" if ok else "")
+    if err == 0:
+        log.finish(records_synced=ok, last_record_at=newest_dt)
+    else:
+        log.error(f"{err} errors during WC order sync")
 
     print(f"\n── Summary ── synced:{ok}  errors:{err}\n")
     if err == 0:
