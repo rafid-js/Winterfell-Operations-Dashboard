@@ -95,6 +95,23 @@ NEW_TABLES = [
             error_msg       TEXT
         )
     """),
+    ("system_status", """
+        CREATE TABLE IF NOT EXISTS system_status (
+            id                    SERIAL PRIMARY KEY,
+            script_name           VARCHAR(100) UNIQUE NOT NULL,
+            display_name          VARCHAR(200),
+            schedule              VARCHAR(100),
+            last_run_at           TIMESTAMP,
+            last_run_status       VARCHAR(20) DEFAULT 'NEVER',
+            last_run_duration_sec INTEGER,
+            last_error            TEXT,
+            rows_processed        INTEGER,
+            next_run_at           TIMESTAMP,
+            is_enabled            BOOLEAN DEFAULT TRUE,
+            run_count             INTEGER DEFAULT 0,
+            fail_count            INTEGER DEFAULT 0
+        )
+    """),
     ("order_items", """
         CREATE TABLE IF NOT EXISTS order_items (
             id                   SERIAL PRIMARY KEY,
@@ -153,6 +170,22 @@ def main():
             conn.execute(text(sql))
             conn.commit()
             print(f"  ✓ index {name}")
+
+        # Seed system_status with all known scripts
+        conn.execute(text("""
+            INSERT INTO system_status (script_name, display_name, schedule) VALUES
+              ('nuport_sync',    'Nuport → Brain sync',          'Every 15 min'),
+              ('wc_sync',        'WooCommerce → Brain sync',      'Every 15 min'),
+              ('zoho_sync',      'Zoho Books → Brain sync',       'Every 6 hours'),
+              ('reorder_engine', 'Inventory reorder check',        'Every 6 hours'),
+              ('meta_sync',      'Meta Ads → Brain sync',          'Every 6 hours'),
+              ('pathao_sync',    'Pathao waybill sync',            'Daily 8AM'),
+              ('reconciliation', 'Pathao × Zoho reconciliation',  'Daily 8AM'),
+              ('daily_briefing', 'Daily Telegram briefing',        'Daily 9AM')
+            ON CONFLICT (script_name) DO NOTHING
+        """))
+        conn.commit()
+        print("  ✓ system_status seeded")
 
     print("\n✓ Done\n")
 
