@@ -43,6 +43,10 @@ def _phone(billing: dict) -> str | None:
     return _str(billing.get('phone'))
 
 
+def _trunc(val, n):
+    return val[:n] if val and len(val) > n else val
+
+
 def map_customer(order: dict) -> dict | None:
     b = order.get('billing') or {}
     phone = _phone(b)
@@ -50,12 +54,12 @@ def map_customer(order: dict) -> dict | None:
         return None
     name = ' '.join(filter(None, [b.get('first_name'), b.get('last_name')])).strip() or None
     return {
-        'phone':          phone,
-        'name':           name,
-        'email':          _str(b.get('email')),
+        'phone':          _trunc(phone, 50),
+        'name':           _trunc(name, 300),
+        'email':          _trunc(_str(b.get('email')), 200),
         'address':        _str(b.get('address_1')),
-        'city':           _str(b.get('city')),
-        'district':       _str(b.get('state')),
+        'city':           _trunc(_str(b.get('city')), 500),
+        'district':       _trunc(_str(b.get('state')), 100),
         'wc_customer_id': order.get('customer_id') or None,
     }
 
