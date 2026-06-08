@@ -258,7 +258,7 @@ def sync_inventory(updated_from: str = None):
     newest_dt = None
 
     with get_connection() as conn:
-        items = nuport.get_all_inventory(updated_from=updated_from)
+        items = list(nuport.iter_all_inventory(updated_from=updated_from))
         print(f"  {len(items)} inventory records fetched from Nuport\n")
 
         for item in items:
