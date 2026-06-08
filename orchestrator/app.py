@@ -683,14 +683,25 @@ function setPeriod(days, btn) {
   load();
 }
 
+function imgErr(el) {
+  var ph = document.createElement('div');
+  ph.className = 'prod-img-ph';
+  ph.innerHTML = '&#x1F4E6;';
+  el.replaceWith(ph);
+}
+
 async function load() {
-  const limit = document.getElementById('limit-sel').value;
+  const tbody = document.getElementById('tbody');
+  const infoEl = document.getElementById('result-info');
+  const limitEl = document.getElementById('limit-sel');
+  if (!tbody || !limitEl) return;
+
+  const limit = limitEl.value;
   const params = new URLSearchParams({limit});
   if (currentDays) params.set('days', currentDays);
 
-  const tbody = document.getElementById('tbody');
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
-  document.getElementById('result-info').innerHTML = '&nbsp;';
+  if (infoEl) infoEl.innerHTML = '&nbsp;';
 
   try {
     const r = await fetch('/api/products?' + params);
@@ -707,23 +718,22 @@ async function load() {
                 : currentDays === 7  ? 'last 7 days'
                 : currentDays        ? 'last ' + currentDays + ' days'
                 : 'all time';
-    document.getElementById('result-info').textContent =
-      'Showing top ' + data.products.length + ' products — ' + label;
+    if (infoEl) infoEl.textContent = 'Showing top ' + data.products.length + ' products — ' + label;
 
     tbody.innerHTML = data.products.map(p => {
       const thumb = p.image_url
-        ? '<img src="' + esc(p.image_url) + '" class="prod-img" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'prod-img-ph\',textContent:\'📦\'}))">'
-        : '<div class="prod-img-ph">📦</div>';
+        ? '<img src="' + esc(p.image_url) + '" class="prod-img" loading="lazy" onerror="imgErr(this)">'
+        : '<div class="prod-img-ph">&#x1F4E6;</div>';
       return '<tr>' +
         '<td class="rank r">' + p.rank + '</td>' +
         '<td class="name"><div class="name-cell">' + thumb + '<span>' + esc(p.name) + '</span></div></td>' +
         '<td class="r qty">' + p.qty.toLocaleString() + '</td>' +
         '<td class="r ord">' + p.orders.toLocaleString() + '</td>' +
-        '<td class="r rev">' + p.revenue.toLocaleString('en-US', {maximumFractionDigits:0}) + '</td>' +
+        '<td class="r rev">' + Math.round(p.revenue).toLocaleString() + '</td>' +
         '</tr>';
     }).join('');
   } catch(e) {
-    tbody.innerHTML = '<tr><td colspan="5" class="state err">Failed to load — ' + e.message + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="state err">Failed to load: ' + e.message + '</td></tr>';
   }
 }
 
