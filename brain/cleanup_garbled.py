@@ -5,12 +5,15 @@ The CSV had column-shift errors on some rows, causing:
   - nuport_status to contain prices (200.00), weights (weight: 0.25 kg),
     order-number ranges (32143-32162), truncated text (BD"), etc.
   - order_items.product_name to contain prices instead of product names
+  - so_number to contain prices, addresses, or dates instead of order IDs
 
 Steps:
   1. Fix lowercase 'delivered' → 'DELIVERED'
-  2. Null out garbled status values
-  3. Fix garbled product names in order_items using skus table
-  4. Re-fetch garbled orders from Nuport API to restore correct status
+  2. Normalize 'COMPLETED' → 'DELIVERED' (Nuport API renamed the status)
+  3. Delete rows with garbled SO numbers (prices, addresses, dates)
+  4. Null out garbled status values
+  5. Fix garbled product names in order_items using skus table
+  6. Re-fetch orders with NULL status from Nuport API
 
 Run:
   python cleanup_garbled.py
@@ -29,6 +32,42 @@ GARBLED_STATUS_PATTERN = r"""
  OR nuport_status ILIKE 'weight:%'           -- weight: 0.25 kg
  OR nuport_status ~ '^BD[^A-Z]'             -- truncated: BD"
 """
+
+# Valid SO numbers start with SO-NNNNN or WIN-NNNNN (suffix like -FPR-R, -1PR, etc. is fine)
+VALID_SO_PATTERN = r"^(SO|WIN)-\d+"
+
+
+def normalize_completed(conn):
+    n = conn.execute(text(
+        "UPDATE orders SET nuport_status = 'DELIVERED' WHERE nuport_status = 'COMPLETED'"
+    )).rowcount
+    conn.commit()
+    print(f"  ✓ Normalised 'COMPLETED' → 'DELIVERED': {n} rows")
+
+
+def delete_garbled_so_numbers(conn):
+    rows = conn.execute(text(f"""
+        SELECT so_number, nuport_status FROM orders
+        WHERE so_number !~ '{VALID_SO_PATTERN}'
+        ORDER BY so_number
+    """)).fetchall()
+    print(f"\n  Rows with garbled SO numbers: {len(rows)}")
+    for r in rows:
+        print(f"    '{r[0]}'  status={r[1]}")
+
+    if rows:
+        # Delete order_items first (FK constraint), then orders
+        n_items = conn.execute(text(f"""
+            DELETE FROM order_items
+            WHERE so_number IN (
+                SELECT so_number FROM orders WHERE so_number !~ '{VALID_SO_PATTERN}'
+            )
+        """)).rowcount
+        n = conn.execute(text(f"""
+            DELETE FROM orders WHERE so_number !~ '{VALID_SO_PATTERN}'
+        """)).rowcount
+        conn.commit()
+        print(f"  ✓ Deleted {n} orders and {n_items} order_items with garbled SO numbers")
 
 
 def fix_statuses(conn):
@@ -135,16 +174,30 @@ if __name__ == '__main__':
     print("=== Brain — Garbled Data Cleanup ===\n")
 
     with get_connection() as conn:
-        print("── Step 1: Fix order statuses ──")
+        print("── Step 1: Normalize COMPLETED → DELIVERED ──")
+        normalize_completed(conn)
+
+        print("\n── Step 2: Delete rows with garbled SO numbers ──")
+        delete_garbled_so_numbers(conn)
+
+        print("\n── Step 3: Fix garbled order statuses ──")
         garbled_so_numbers = fix_statuses(conn)
 
-        print("\n── Step 2: Fix order_items product names ──")
+        print("\n── Step 4: Fix order_items product names ──")
         fix_product_names(conn)
 
-        print("\n── Step 3: Final status summary ──")
+        # Collect orders still at NULL status
+        null_orders = conn.execute(text(
+            "SELECT so_number FROM orders WHERE nuport_status IS NULL ORDER BY so_number"
+        )).fetchall()
+        null_so_numbers = [r[0] for r in null_orders if r[0] and not r[0].startswith(' ')]
+
+        print("\n── Step 5: Final status summary ──")
         show_final_statuses(conn)
 
-    print("\n── Step 4: Re-fetch garbled orders from Nuport ──")
-    refetch_from_nuport(garbled_so_numbers)
+    # Combine: newly nulled + already-null
+    to_refetch = list(dict.fromkeys(garbled_so_numbers + null_so_numbers))
+    print(f"\n── Step 6: Re-fetch {len(to_refetch)} orders with NULL status from Nuport ──")
+    refetch_from_nuport(to_refetch)
 
     print("\n✓ Done\n")
