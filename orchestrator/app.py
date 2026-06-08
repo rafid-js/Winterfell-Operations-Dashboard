@@ -228,6 +228,7 @@ def api_products():
                     '',
                     'i'
                 )) AS base_name,
+                MIN(s.image_url)                 AS image_url,
                 SUM(oi.quantity)                 AS qty_sold,
                 COUNT(DISTINCT o.so_number)      AS orders,
                 COALESCE(SUM(oi.total_price), 0) AS revenue
@@ -246,9 +247,10 @@ def api_products():
             {
                 'rank': i + 1,
                 'name': r[0] or '—',
-                'qty': int(r[1]),
-                'orders': int(r[2]),
-                'revenue': float(r[3]),
+                'image_url': r[1],
+                'qty': int(r[2]),
+                'orders': int(r[3]),
+                'revenue': float(r[4]),
             }
             for i, r in enumerate(rows)
         ],
@@ -608,7 +610,13 @@ tbody tr:last-child{border-bottom:none}
 tbody tr:hover{background:#1c2030}
 td{padding:10px 16px;font-size:.83rem}
 td.rank{color:#8b949e;font-weight:600;width:44px}
-td.name{color:#f0f6fc;max-width:360px;word-break:break-word}
+td.name{color:#f0f6fc;max-width:380px}
+.name-cell{display:flex;align-items:center;gap:10px}
+.prod-img{width:44px;height:44px;object-fit:cover;border-radius:6px;
+          border:1px solid #30363d;flex-shrink:0;background:#21262d}
+.prod-img-ph{width:44px;height:44px;border-radius:6px;border:1px solid #30363d;
+             flex-shrink:0;background:#21262d;display:flex;align-items:center;
+             justify-content:center;color:#30363d;font-size:1.1rem}
 td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 td.qty{color:#3fb950;font-weight:600}
 td.ord{color:#79c0ff}
@@ -702,15 +710,18 @@ async function load() {
     document.getElementById('result-info').textContent =
       'Showing top ' + data.products.length + ' products — ' + label;
 
-    tbody.innerHTML = data.products.map(p =>
-      '<tr>' +
-      '<td class="rank r">' + p.rank + '</td>' +
-      '<td class="name">' + esc(p.name) + '</td>' +
-      '<td class="r qty">' + p.qty.toLocaleString() + '</td>' +
-      '<td class="r ord">' + p.orders.toLocaleString() + '</td>' +
-      '<td class="r rev">' + p.revenue.toLocaleString('en-US', {maximumFractionDigits:0}) + '</td>' +
-      '</tr>'
-    ).join('');
+    tbody.innerHTML = data.products.map(p => {
+      const thumb = p.image_url
+        ? '<img src="' + esc(p.image_url) + '" class="prod-img" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'prod-img-ph\',textContent:\'📦\'}))">'
+        : '<div class="prod-img-ph">📦</div>';
+      return '<tr>' +
+        '<td class="rank r">' + p.rank + '</td>' +
+        '<td class="name"><div class="name-cell">' + thumb + '<span>' + esc(p.name) + '</span></div></td>' +
+        '<td class="r qty">' + p.qty.toLocaleString() + '</td>' +
+        '<td class="r ord">' + p.orders.toLocaleString() + '</td>' +
+        '<td class="r rev">' + p.revenue.toLocaleString('en-US', {maximumFractionDigits:0}) + '</td>' +
+        '</tr>';
+    }).join('');
   } catch(e) {
     tbody.innerHTML = '<tr><td colspan="5" class="state err">Failed to load — ' + e.message + '</td></tr>';
   }
