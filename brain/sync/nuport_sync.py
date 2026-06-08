@@ -85,6 +85,23 @@ def map_sku_from_product(p: dict) -> dict | None:
     }
 
 
+def _extract_waybill(o: dict):
+    """Nuport returns pathao_waybill as either a string ID or a dict with trackingCode."""
+    raw = o.get('deliveryTrackingId') or o.get('deliveryConsignment')
+    if isinstance(raw, dict):
+        return raw.get('trackingCode') or raw.get('id')
+    return raw
+
+
+# Nuport renamed DELIVERED → COMPLETED at some point; treat them as the same
+_STATUS_ALIASES = {'COMPLETED': 'DELIVERED'}
+
+def _normalize_status(status: str | None) -> str | None:
+    if not status:
+        return status
+    return _STATUS_ALIASES.get(status.upper(), status)
+
+
 def map_order(o: dict) -> dict:
     items = o.get('salesOrderItems') or []
     dist  = o.get('distributor') or {}
@@ -99,7 +116,7 @@ def map_order(o: dict) -> dict:
     return {
         'so_number':        o.get('internalId'),
         'nuport_order_id':  o.get('id'),
-        'nuport_status':    o.get('status'),
+        'nuport_status':    _normalize_status(o.get('status')),
         'source_channel':   o.get('source'),
         'customer_name':    dist.get('name'),
         'customer_phone':   dist.get('phone'),
@@ -110,7 +127,7 @@ def map_order(o: dict) -> dict:
         'order_date':       _parse_dt(o.get('orderDate') or o.get('createdAt')),
         'shipped_date':     _parse_dt(o.get('shippedAt')),
         'delivered_date':   _parse_dt(o.get('deliveredAt')),
-        'pathao_waybill':   o.get('deliveryTrackingId') or o.get('deliveryConsignment'),
+        'pathao_waybill':   _extract_waybill(o),
     }
 
 
