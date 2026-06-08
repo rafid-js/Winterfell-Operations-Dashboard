@@ -31,23 +31,24 @@ _INSIGHT_FIELDS = ','.join([
 
 class MetaClient:
     def __init__(self):
-        app_id         = os.getenv('META_APP_ID')
-        app_secret     = os.getenv('META_APP_SECRET')
-        access_token   = os.getenv('META_ACCESS_TOKEN')
-        ad_account_id  = os.getenv('META_AD_ACCOUNT_ID')
+        self._access_token  = None
+        self._ad_account_id = None
+        self._app_id        = None
+        self._app_secret    = None
 
-        if not access_token:
-            raise RuntimeError("META_ACCESS_TOKEN not set in brain/.env")
-        if not ad_account_id:
-            raise RuntimeError("META_AD_ACCOUNT_ID not set in brain/.env")
-
-        self._access_token   = access_token
-        self._ad_account_id  = ad_account_id
-        # app_id / app_secret stored for future token refresh use
-        self._app_id         = app_id
-        self._app_secret      = app_secret
+    def _ensure_auth(self):
+        if self._access_token is None:
+            access_token  = os.getenv('META_ACCESS_TOKEN')
+            ad_account_id = os.getenv('META_AD_ACCOUNT_ID')
+            if not access_token or not ad_account_id:
+                raise RuntimeError("META_ACCESS_TOKEN / META_AD_ACCOUNT_ID not set in environment")
+            self._access_token  = access_token
+            self._ad_account_id = ad_account_id
+            self._app_id        = os.getenv('META_APP_ID')
+            self._app_secret    = os.getenv('META_APP_SECRET')
 
     def _get(self, path: str, params: dict = None) -> dict:
+        self._ensure_auth()
         p = {'access_token': self._access_token}
         if params:
             p.update(params)
@@ -80,6 +81,7 @@ class MetaClient:
             'time_range':     f'{{"since":"{since}","until":"{until}"}}',
             'limit':          500,
         }
+        self._ensure_auth()
         path    = f"/{self._ad_account_id}/insights"
         results = []
 

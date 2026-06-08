@@ -14,12 +14,17 @@ class NuportClient:
     BASE_URL = "https://api.nuport.io/integration"
 
     def __init__(self):
-        key = os.getenv('NUPORT_API_KEY')
-        if not key:
-            raise RuntimeError("NUPORT_API_KEY not set in brain/.env")
-        self._headers = {'Authorization': key}
+        self._headers = None  # lazy init on first use
+
+    def _ensure_auth(self):
+        if self._headers is None:
+            key = os.getenv('NUPORT_API_KEY')
+            if not key:
+                raise RuntimeError("NUPORT_API_KEY not set in environment")
+            self._headers = {'Authorization': key}
 
     def _get(self, path: str, params: dict = None) -> dict | list:
+        self._ensure_auth()
         r = requests.get(
             f"{self.BASE_URL}{path}",
             headers=self._headers,

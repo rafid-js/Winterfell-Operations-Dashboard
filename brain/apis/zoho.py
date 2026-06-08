@@ -22,13 +22,20 @@ class ZohoClient:
     TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token"
 
     def __init__(self):
-        self.client_id     = os.getenv('ZOHO_CLIENT_ID')
-        self.client_secret = os.getenv('ZOHO_CLIENT_SECRET')
-        self.refresh_token = os.getenv('ZOHO_REFRESH_TOKEN')
-        self.org_id        = os.getenv('ZOHO_ORG_ID')
+        self.client_id     = None
+        self.client_secret = None
+        self.refresh_token = None
+        self.org_id        = None
         self._token        = None
         self._expires_at   = 0
-        self._load_cache()
+
+    def _ensure_auth(self):
+        if self.client_id is None:
+            self.client_id     = os.getenv('ZOHO_CLIENT_ID')
+            self.client_secret = os.getenv('ZOHO_CLIENT_SECRET')
+            self.refresh_token = os.getenv('ZOHO_REFRESH_TOKEN')
+            self.org_id        = os.getenv('ZOHO_ORG_ID')
+            self._load_cache()
 
     def _load_cache(self):
         if _CACHE.exists():
@@ -49,6 +56,7 @@ class ZohoClient:
             pass
 
     def token(self):
+        self._ensure_auth()
         if self._token and time.time() < self._expires_at:
             return self._token
 

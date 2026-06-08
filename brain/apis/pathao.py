@@ -21,17 +21,24 @@ _AUTH   = f"{_BASE}/aladdin/api/v1/issue-token"
 class PathaoClient:
 
     def __init__(self):
-        self._client_id     = os.getenv('PATHAO_CLIENT_ID')
-        self._client_secret = os.getenv('PATHAO_CLIENT_SECRET')
-        self._webhook_secret = os.getenv('PATHAO_WEBHOOK_SECRET', '')
-        if not self._client_id or not self._client_secret:
-            raise RuntimeError("PATHAO_CLIENT_ID / PATHAO_CLIENT_SECRET not set in brain/.env")
-        self._access_token  = None
-        self._expires_at    = 0
+        self._client_id      = None
+        self._client_secret  = None
+        self._webhook_secret = ''
+        self._access_token   = None
+        self._expires_at     = 0
+
+    def _ensure_auth(self):
+        if self._client_id is None:
+            self._client_id      = os.getenv('PATHAO_CLIENT_ID')
+            self._client_secret  = os.getenv('PATHAO_CLIENT_SECRET')
+            self._webhook_secret = os.getenv('PATHAO_WEBHOOK_SECRET', '')
+            if not self._client_id or not self._client_secret:
+                raise RuntimeError("PATHAO_CLIENT_ID / PATHAO_CLIENT_SECRET not set in environment")
 
     # ── Auth ──────────────────────────────────────────────────────────────────
 
     def _token(self) -> str:
+        self._ensure_auth()
         if self._access_token and time.time() < self._expires_at - 60:
             return self._access_token
         r = requests.post(_AUTH, json={
