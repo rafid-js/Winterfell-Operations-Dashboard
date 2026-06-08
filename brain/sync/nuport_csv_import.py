@@ -10,6 +10,7 @@ Usage:
 Safe to re-run — all upserts use ON CONFLICT DO UPDATE.
 Uses psycopg2 execute_values for true bulk inserts (one SQL per batch).
 """
+import re
 import sys
 import csv
 import argparse
@@ -30,7 +31,10 @@ NOW   = datetime.now()
 def _dt(val):
     if not val or str(val).strip() in ('', '-', 'N/A', 'n/a'):
         return None
-    s = str(val).strip()[:19]
+    raw = str(val).strip()
+
+    # Standard compact formats (ISO, DD/MM/YYYY, MM/DD/YYYY)
+    s = raw[:19]
     for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d',
                 '%d/%m/%Y %H:%M:%S', '%d/%m/%Y',
                 '%m/%d/%Y %H:%M:%S', '%m/%d/%Y'):
@@ -38,6 +42,15 @@ def _dt(val):
             return datetime.strptime(s, fmt)
         except ValueError:
             continue
+
+    # Nuport CSV format: "March 25th 2025, 5:08:09 pm" — strip ordinal suffix first
+    clean = re.sub(r'(\d+)(st|nd|rd|th)\b', r'\1', raw)
+    for fmt in ('%B %d %Y, %I:%M:%S %p', '%B %d %Y, %I:%M %p', '%B %d %Y'):
+        try:
+            return datetime.strptime(clean, fmt)
+        except ValueError:
+            continue
+
     return None
 
 
@@ -95,7 +108,10 @@ SQL_ORDER = """
         collected_amount, pathao_waybill,
         order_date, shipped_date, delivered_date, updated_at
     ) VALUES %s
-    ON CONFLICT (so_number) DO NOTHING
+    ON CONFLICT (so_number) DO UPDATE SET
+        order_date     = COALESCE(orders.order_date,     EXCLUDED.order_date),
+        shipped_date   = COALESCE(orders.shipped_date,   EXCLUDED.shipped_date),
+        delivered_date = COALESCE(orders.delivered_date, EXCLUDED.delivered_date)
 """
 
 SQL_ITEM = """
