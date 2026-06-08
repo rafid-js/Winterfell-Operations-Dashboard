@@ -612,11 +612,11 @@ td{padding:10px 16px;font-size:.83rem}
 td.rank{color:#8b949e;font-weight:600;width:44px}
 td.name{color:#f0f6fc;max-width:380px}
 .name-cell{display:flex;align-items:center;gap:10px}
-.prod-img{width:44px;height:44px;object-fit:cover;border-radius:6px;
+.prod-img{width:64px;height:64px;object-fit:cover;border-radius:8px;
           border:1px solid #30363d;flex-shrink:0;background:#21262d}
-.prod-img-ph{width:44px;height:44px;border-radius:6px;border:1px solid #30363d;
+.prod-img-ph{width:64px;height:64px;border-radius:8px;border:1px solid #30363d;
              flex-shrink:0;background:#21262d;display:flex;align-items:center;
-             justify-content:center;color:#30363d;font-size:1.1rem}
+             justify-content:center;color:#30363d;font-size:1.5rem}
 td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 td.qty{color:#3fb950;font-weight:600}
 td.ord{color:#79c0ff}
