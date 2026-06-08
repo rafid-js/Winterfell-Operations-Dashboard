@@ -201,6 +201,63 @@ def api_toggle(script_name):
     return jsonify({'script_name': script_name, 'is_enabled': row['is_enabled']})
 
 
+@app.route('/products')
+@login_required
+def products_page():
+    return render_template_string(PRODUCTS_HTML)
+
+
+@app.route('/api/products')
+@login_required
+def api_products():
+    try:
+        limit = max(1, min(500, int(request.args.get('limit', 50))))
+        days_raw = request.args.get('days')
+        days = max(1, min(3650, int(days_raw))) if days_raw else None
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid parameters'}), 400
+
+    date_filter = f"AND o.order_date >= NOW() - INTERVAL '{days} days'" if days else ""
+
+    with get_connection() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                TRIM(regexp_replace(
+                    COALESCE(s.product_name, oi.product_name),
+                    '\\s*-\\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[23][0-9])\\s*$',
+                    '',
+                    'i'
+                )) AS base_name,
+                SUM(oi.quantity)                 AS qty_sold,
+                COUNT(DISTINCT o.so_number)      AS orders,
+                COALESCE(SUM(oi.total_price), 0) AS revenue
+            FROM order_items oi
+            JOIN orders o ON oi.so_number = o.so_number
+            LEFT JOIN skus s ON oi.sku = s.sku
+            WHERE o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered', 'COMPLETED')
+              {date_filter}
+            GROUP BY base_name
+            ORDER BY qty_sold DESC
+            LIMIT {limit}
+        """)).fetchall()
+
+    return jsonify({
+        'products': [
+            {
+                'rank': i + 1,
+                'name': r[0] or '—',
+                'qty': int(r[1]),
+                'orders': int(r[2]),
+                'revenue': float(r[3]),
+            }
+            for i, r in enumerate(rows)
+        ],
+        'limit': limit,
+        'days': days,
+        'count': len(rows),
+    })
+
+
 # ── HTML Templates ─────────────────────────────────────────────────────────────
 
 LOGIN_HTML = """<!DOCTYPE html>
@@ -256,6 +313,11 @@ header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;
 header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .header-right{display:flex;align-items:center;gap:16px}
 #server-time{color:#8b949e;font-size:.8rem}
+.top-nav{display:flex;gap:4px}
+.nav-link{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 12px;
+          border:1px solid transparent;border-radius:6px;transition:.2s}
+.nav-link:hover{border-color:#30363d;color:#e6edf3}
+.nav-link.active{border-color:#30363d;color:#e6edf3;background:#21262d}
 .logout{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 10px;
         border:1px solid #30363d;border-radius:6px;transition:border-color .2s}
 .logout:hover{border-color:#8b949e;color:#e6edf3}
@@ -320,6 +382,10 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 <header>
   <h1>⚔️ Winterfell Operations</h1>
   <div class="header-right">
+    <nav class="top-nav">
+      <a href="/" class="nav-link active">Operations</a>
+      <a href="/products" class="nav-link">Products</a>
+    </nav>
     <span id="server-time">—</span>
     <a href="/logout" class="logout">Logout</a>
   </div>
@@ -490,6 +556,171 @@ function refresh() {
 
 refresh();
 refreshTimer = setInterval(refresh, 30000);
+</script>
+</body>
+</html>"""
+
+
+PRODUCTS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winterfell — Top Products</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;
+       display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
+.header-right{display:flex;align-items:center;gap:16px}
+.top-nav{display:flex;gap:4px}
+.nav-link{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 12px;
+          border:1px solid transparent;border-radius:6px;transition:.2s}
+.nav-link:hover{border-color:#30363d;color:#e6edf3}
+.nav-link.active{border-color:#30363d;color:#e6edf3;background:#21262d}
+.logout{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 10px;
+        border:1px solid #30363d;border-radius:6px;transition:.2s}
+.logout:hover{border-color:#8b949e;color:#e6edf3}
+.container{max-width:1100px;margin:0 auto;padding:24px}
+.page-title{font-size:1.05rem;font-weight:700;color:#f0f6fc;margin-bottom:18px}
+.filters{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+         background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 18px;margin-bottom:16px}
+.filter-label{color:#8b949e;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+.period-btns{display:flex;gap:6px}
+.period-btn{background:#0d1117;border:1px solid #30363d;border-radius:6px;
+            color:#8b949e;cursor:pointer;font-size:.8rem;padding:5px 14px;transition:.2s}
+.period-btn:hover{border-color:#58a6ff;color:#79c0ff}
+.period-btn.active{background:#1c2a3f;border-color:#1f6feb;color:#58a6ff;font-weight:600}
+.sep{color:#30363d}
+.limit-sel{background:#0d1117;border:1px solid #30363d;border-radius:6px;
+           color:#e6edf3;font-size:.8rem;padding:5px 10px;cursor:pointer;outline:none}
+.limit-sel:focus{border-color:#388bfd}
+.result-info{color:#8b949e;font-size:.78rem;margin-bottom:10px;min-height:1.2em}
+.table-wrap{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:auto}
+table{width:100%;border-collapse:collapse}
+thead th{background:#1c2030;color:#8b949e;font-size:.7rem;font-weight:600;
+         text-transform:uppercase;letter-spacing:.05em;padding:10px 16px;text-align:left;
+         border-bottom:1px solid #30363d;white-space:nowrap}
+thead th.r{text-align:right}
+tbody tr{border-bottom:1px solid #21262d;transition:background .12s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:#1c2030}
+td{padding:10px 16px;font-size:.83rem}
+td.rank{color:#8b949e;font-weight:600;width:44px}
+td.name{color:#f0f6fc;max-width:360px;word-break:break-word}
+td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.qty{color:#3fb950;font-weight:600}
+td.ord{color:#79c0ff}
+td.rev{color:#e6edf3}
+.state{text-align:center;padding:48px;color:#8b949e;font-size:.85rem}
+.state.err{color:#f85149}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ Winterfell Operations</h1>
+  <div class="header-right">
+    <nav class="top-nav">
+      <a href="/" class="nav-link">Operations</a>
+      <a href="/products" class="nav-link active">Products</a>
+    </nav>
+    <a href="/logout" class="logout">Logout</a>
+  </div>
+</header>
+<div class="container">
+  <div class="page-title">Top Products — Delivered Orders</div>
+  <div class="filters">
+    <span class="filter-label">Period</span>
+    <div class="period-btns">
+      <button class="period-btn active" onclick="setPeriod(null,this)">All Time</button>
+      <button class="period-btn" onclick="setPeriod(90,this)">3 Months</button>
+      <button class="period-btn" onclick="setPeriod(30,this)">1 Month</button>
+      <button class="period-btn" onclick="setPeriod(7,this)">7 Days</button>
+    </div>
+    <span class="sep">|</span>
+    <span class="filter-label">Show</span>
+    <select class="limit-sel" id="limit-sel" onchange="load()">
+      <option value="20">Top 20</option>
+      <option value="50" selected>Top 50</option>
+      <option value="100">Top 100</option>
+      <option value="200">Top 200</option>
+    </select>
+  </div>
+  <div class="result-info" id="result-info">&nbsp;</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Product</th>
+          <th class="r">Qty Sold</th>
+          <th class="r">Orders</th>
+          <th class="r">Revenue (৳)</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="5" class="state">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+let currentDays = null;
+
+function setPeriod(days, btn) {
+  currentDays = days;
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  load();
+}
+
+async function load() {
+  const limit = document.getElementById('limit-sel').value;
+  const params = new URLSearchParams({limit});
+  if (currentDays) params.set('days', currentDays);
+
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
+  document.getElementById('result-info').innerHTML = '&nbsp;';
+
+  try {
+    const r = await fetch('/api/products?' + params);
+    if (!r.ok) throw new Error(r.statusText);
+    const data = await r.json();
+
+    if (!data.products || !data.products.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="state">No data for this period.</td></tr>';
+      return;
+    }
+
+    const label = currentDays === 90 ? 'last 3 months'
+                : currentDays === 30 ? 'last month'
+                : currentDays === 7  ? 'last 7 days'
+                : currentDays        ? 'last ' + currentDays + ' days'
+                : 'all time';
+    document.getElementById('result-info').textContent =
+      'Showing top ' + data.products.length + ' products — ' + label;
+
+    tbody.innerHTML = data.products.map(p =>
+      '<tr>' +
+      '<td class="rank r">' + p.rank + '</td>' +
+      '<td class="name">' + esc(p.name) + '</td>' +
+      '<td class="r qty">' + p.qty.toLocaleString() + '</td>' +
+      '<td class="r ord">' + p.orders.toLocaleString() + '</td>' +
+      '<td class="r rev">' + p.revenue.toLocaleString('en-US', {maximumFractionDigits:0}) + '</td>' +
+      '</tr>'
+    ).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="5" class="state err">Failed to load — ' + e.message + '</td></tr>';
+  }
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+load();
 </script>
 </body>
 </html>"""
