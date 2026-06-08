@@ -29,7 +29,7 @@ def build_briefing() -> str:
                 COUNT(*) AS total,
                 SUM(product_total) AS gross,
                 SUM(payout_amount) AS collected,
-                COUNT(*) FILTER (WHERE nuport_status = 'Flagged_Returned') AS returns,
+                COUNT(*) FILTER (WHERE nuport_status = 'FLAGGED') AS returns,
                 COUNT(*) FILTER (WHERE source_channel = 'WooCommerce') AS wc,
                 COUNT(*) FILTER (WHERE source_channel NOT IN ('WooCommerce') OR source_channel IS NULL) AS other
             FROM orders
