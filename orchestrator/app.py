@@ -145,7 +145,6 @@ def api_logs(script_name):
 
 
 @app.route('/api/health')
-@login_required
 def api_health():
     try:
         with get_connection() as conn:
