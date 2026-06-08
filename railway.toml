@@ -1,6 +1,6 @@
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "orchestrator.Dockerfile"
 
 [deploy]
 healthcheckPath = "/api/health"
