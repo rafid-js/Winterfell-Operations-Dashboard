@@ -255,10 +255,16 @@ def sync_inventory(updated_from: str = None):
         print(f"  Incremental: updatedFrom {updated_from} (manual)")
 
     ok = skip = err = 0
-    newest_dt = None
 
     with get_connection() as conn:
-        items = list(nuport.iter_all_inventory(updated_from=updated_from))
+        try:
+            items = list(nuport.iter_all_inventory(updated_from=updated_from))
+        except Exception as e:
+            if updated_from and '500' in str(e):
+                print(f"  ⚠ Nuport returned 500 with updatedFrom filter — falling back to full sync")
+                items = list(nuport.iter_all_inventory())
+            else:
+                raise
         print(f"  {len(items)} inventory records fetched from Nuport\n")
 
         for item in items:
