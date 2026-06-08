@@ -85,6 +85,14 @@ def map_sku_from_product(p: dict) -> dict | None:
     }
 
 
+def _extract_waybill(o: dict):
+    """Nuport returns pathao_waybill as either a string ID or a dict with trackingCode."""
+    raw = o.get('deliveryTrackingId') or o.get('deliveryConsignment')
+    if isinstance(raw, dict):
+        return raw.get('trackingCode') or raw.get('id')
+    return raw
+
+
 def map_order(o: dict) -> dict:
     items = o.get('salesOrderItems') or []
     dist  = o.get('distributor') or {}
@@ -110,7 +118,7 @@ def map_order(o: dict) -> dict:
         'order_date':       _parse_dt(o.get('orderDate') or o.get('createdAt')),
         'shipped_date':     _parse_dt(o.get('shippedAt')),
         'delivered_date':   _parse_dt(o.get('deliveredAt')),
-        'pathao_waybill':   o.get('deliveryTrackingId') or o.get('deliveryConsignment'),
+        'pathao_waybill':   _extract_waybill(o),
     }
 
 
