@@ -15,10 +15,15 @@ with get_connection() as conn:
     for r in rows:
         print(f"  {r[1]:>8}  {r[0]}")
 
-    print("\n=== Top 20 Products by quantity sold (Delivered) ===\n")
-    rows = conn.execute(text("""
+    print("\n=== Top 20 Products by quantity sold — all sizes combined (Delivered) ===\n")
+    rows = conn.execute(text(r"""
         SELECT
-            COALESCE(s.product_name, oi.product_name) AS name,
+            TRIM(regexp_replace(
+                COALESCE(s.product_name, oi.product_name),
+                '\s*-\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[23][0-9])\s*$',
+                '',
+                'i'
+            )) AS base_name,
             SUM(oi.quantity)            AS qty_sold,
             COUNT(DISTINCT o.so_number) AS orders,
             COALESCE(SUM(oi.total_price), 0) AS revenue
@@ -26,7 +31,7 @@ with get_connection() as conn:
         JOIN orders o ON oi.so_number = o.so_number
         LEFT JOIN skus s ON oi.sku = s.sku
         WHERE o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered')
-        GROUP BY COALESCE(s.product_name, oi.product_name)
+        GROUP BY base_name
         ORDER BY qty_sold DESC
         LIMIT 20
     """)).fetchall()
