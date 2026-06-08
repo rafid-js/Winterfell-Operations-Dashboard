@@ -217,7 +217,7 @@ def api_products():
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
-    date_filter = f"AND o.order_date >= NOW() - INTERVAL '{days} days'" if days else ""
+    date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
 
     with get_connection() as conn:
         rows = conn.execute(text(f"""
