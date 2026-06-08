@@ -25,7 +25,7 @@ with get_connection() as conn:
         FROM order_items oi
         JOIN orders o ON oi.so_number = o.so_number
         LEFT JOIN skus s ON oi.sku = s.sku
-        WHERE o.nuport_status = 'Delivered'
+        WHERE o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered')
         GROUP BY COALESCE(s.product_name, oi.product_name)
         ORDER BY qty_sold DESC
         LIMIT 20
