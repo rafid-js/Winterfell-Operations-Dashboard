@@ -181,17 +181,29 @@ def main():
         conn.execute(text("""
             INSERT INTO system_status (script_name, display_name, schedule) VALUES
               ('nuport_sync',    'Nuport → Brain sync',          'Every 15 min'),
-              ('wc_sync',        'WooCommerce → Brain sync',      'Every 15 min'),
-              ('zoho_sync',      'Zoho Books → Brain sync',       'Every 6 hours'),
-              ('reorder_engine', 'Inventory reorder check',        'Every 6 hours'),
-              ('meta_sync',      'Meta Ads → Brain sync',          'Every 6 hours'),
-              ('pathao_sync',    'Pathao waybill sync',            'Daily 8AM'),
-              ('reconciliation', 'Pathao × Zoho reconciliation',  'Daily 8AM'),
-              ('daily_briefing', 'Daily Telegram briefing',        'Daily 9AM')
-            ON CONFLICT (script_name) DO NOTHING
+              ('wc_sync',        'WooCommerce → SKU images',     'Every 6 hours'),
+              ('zoho_sync',      'Zoho Books → Brain sync',      'Every 6 hours'),
+              ('reorder_engine', 'Inventory reorder check',      'Every 6 hours'),
+              ('meta_sync',      'Meta Ads → Brain sync',        'Every 6 hours'),
+              ('pathao_sync',    'Pathao waybill sync',          'Daily 8AM'),
+              ('reconciliation', 'Pathao × Zoho reconciliation', 'Daily 8AM'),
+              ('daily_briefing', 'Daily Telegram briefing',      'Daily 9AM')
+            ON CONFLICT (script_name) DO UPDATE SET
+                display_name = EXCLUDED.display_name,
+                schedule     = EXCLUDED.schedule
         """))
         conn.commit()
         print("  ✓ system_status seeded")
+
+        # Remove WC-XXXX orphan orders (WC order sync abandoned — Nuport is source of truth)
+        items_deleted = conn.execute(text(
+            "DELETE FROM order_items WHERE so_number LIKE 'WC-%'"
+        )).rowcount
+        orders_deleted = conn.execute(text(
+            "DELETE FROM orders WHERE so_number LIKE 'WC-%'"
+        )).rowcount
+        conn.commit()
+        print(f"  ✓ cleaned up {orders_deleted} WC-XXXX orders, {items_deleted} items")
 
     print("\n✓ Done\n")
 
