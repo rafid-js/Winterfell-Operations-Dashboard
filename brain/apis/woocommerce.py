@@ -13,17 +13,21 @@ load_dotenv()
 
 class WooCommerceClient:
     def __init__(self):
-        wc_url = os.getenv('WC_URL')
-        key    = os.getenv('WC_CONSUMER_KEY')
-        secret = os.getenv('WC_CONSUMER_SECRET')
-        if not wc_url:
-            raise RuntimeError("WC_URL not set in brain/.env")
-        if not key or not secret:
-            raise RuntimeError("WC_CONSUMER_KEY / WC_CONSUMER_SECRET not set in brain/.env")
-        self.BASE_URL = f"{wc_url.rstrip('/')}/wp-json/wc/v3"
-        self._auth    = (key, secret)
+        self.BASE_URL = None
+        self._auth    = None
+
+    def _ensure_auth(self):
+        if self._auth is None:
+            wc_url = os.getenv('WC_URL')
+            key    = os.getenv('WC_CONSUMER_KEY')
+            secret = os.getenv('WC_CONSUMER_SECRET')
+            if not wc_url or not key or not secret:
+                raise RuntimeError("WC_URL / WC_CONSUMER_KEY / WC_CONSUMER_SECRET not set in environment")
+            self.BASE_URL = f"{wc_url.rstrip('/')}/wp-json/wc/v3"
+            self._auth    = (key, secret)
 
     def _get(self, path: str, params: dict = None) -> requests.Response:
+        self._ensure_auth()
         r = requests.get(
             f"{self.BASE_URL}{path}",
             auth=self._auth,
