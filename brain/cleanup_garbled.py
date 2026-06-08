@@ -33,8 +33,8 @@ GARBLED_STATUS_PATTERN = r"""
  OR nuport_status ~ '^BD[^A-Z]'             -- truncated: BD"
 """
 
-# Valid SO numbers look like SO-12345, SO-12345R, WIN-12345, WIN-12345R
-VALID_SO_PATTERN = r"^(SO|WIN)-\d+R?$"
+# Valid SO numbers start with SO-NNNNN or WIN-NNNNN (suffix like -FPR-R, -1PR, etc. is fine)
+VALID_SO_PATTERN = r"^(SO|WIN)-\d+"
 
 
 def normalize_completed(conn):
@@ -56,11 +56,18 @@ def delete_garbled_so_numbers(conn):
         print(f"    '{r[0]}'  status={r[1]}")
 
     if rows:
+        # Delete order_items first (FK constraint), then orders
+        n_items = conn.execute(text(f"""
+            DELETE FROM order_items
+            WHERE so_number IN (
+                SELECT so_number FROM orders WHERE so_number !~ '{VALID_SO_PATTERN}'
+            )
+        """)).rowcount
         n = conn.execute(text(f"""
             DELETE FROM orders WHERE so_number !~ '{VALID_SO_PATTERN}'
         """)).rowcount
         conn.commit()
-        print(f"  ✓ Deleted {n} rows with garbled SO numbers")
+        print(f"  ✓ Deleted {n} orders and {n_items} order_items with garbled SO numbers")
 
 
 def fix_statuses(conn):
