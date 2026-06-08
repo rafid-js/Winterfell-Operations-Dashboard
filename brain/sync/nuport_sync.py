@@ -15,6 +15,7 @@ Notes:
 """
 import sys
 import argparse
+import requests
 from datetime import datetime
 from sqlalchemy import text
 
@@ -312,6 +313,98 @@ def sync_single_order(so_number: str):
     print()
 
 
+def sync_new_orders(max_misses: int = 50):
+    """
+    Find the highest SO-{number} in the Brain, then scan forward
+    trying SO-{n+1}, SO-{n+2}... until max_misses consecutive 404s.
+    Also checks -1PR/-2PR return variants for each found order.
+    """
+    print(f"\n=== Nuport New Order Scan  {datetime.now():%Y-%m-%d %H:%M} ===\n")
+    log = SyncLog('nuport', 'new_orders')
+
+    with get_connection() as conn:
+        row = conn.execute(text("""
+            SELECT so_number
+            FROM orders
+            WHERE so_number ~ '^SO-[0-9]+$'
+            ORDER BY LENGTH(so_number) DESC, so_number DESC
+            LIMIT 1
+        """)).fetchone()
+
+    if not row:
+        print("  No SO numbers in Brain — run CSV import first")
+        return
+
+    max_so  = row[0]
+    max_num = int(max_so.split('-')[1])
+    print(f"  Highest SO in Brain: {max_so}")
+    print(f"  Scanning from SO-{max_num + 1} (stopping after {max_misses} consecutive misses)\n")
+
+    misses = ok = skipped = 0
+    current = max_num + 1
+
+    def _upsert_order(raw):
+        with get_connection() as conn:
+            cust = map_customer(raw)
+            customer_id = None
+            if cust:
+                r = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
+                customer_id = r[0] if r else None
+                conn.commit()
+            order = map_order(raw)
+            order['customer_id'] = customer_id
+            conn.execute(UPSERT_ORDER, order)
+            conn.commit()
+        return order
+
+    while misses < max_misses:
+        so = f"SO-{current}"
+        try:
+            raw = nuport.get_order(so)
+            if not raw.get('internalId'):
+                misses += 1
+                current += 1
+                continue
+
+            order = _upsert_order(raw)
+            print(f"  ✓ {so} → {order['nuport_status']}")
+            ok += 1
+            misses = 0  # reset on success
+
+            # Check for return variants (-1PR, -2PR)
+            for suffix in ('1PR', '2PR', '3PR'):
+                so_variant = f"{so}-{suffix}"
+                try:
+                    raw_v = nuport.get_order(so_variant)
+                    if raw_v.get('internalId'):
+                        v = _upsert_order(raw_v)
+                        print(f"    ✓ {so_variant} → {v['nuport_status']}")
+                        ok += 1
+                    else:
+                        break
+                except Exception:
+                    break
+
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                misses += 1
+                skipped += 1
+            else:
+                print(f"  ✗ {so}: HTTP {e.response.status_code}")
+                misses += 1
+        except Exception as e:
+            print(f"  ✗ {so}: {e}")
+            misses += 1
+
+        current += 1
+
+    print(f"\n── Summary ── new:{ok}  gaps scanned:{skipped}  stopped at SO-{current}\n")
+    if ok > 0:
+        log.finish(records_synced=ok, last_record_at=datetime.now())
+    else:
+        print("  No new orders found")
+
+
 def sync_orders_from_brain():
     """Pull current Nuport status for every SO number already in the Brain."""
     print(f"\n=== Nuport Status Refresh — all Brain orders  {datetime.now():%Y-%m-%d %H:%M} ===\n")
@@ -359,17 +452,22 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Nuport → Brain sync')
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument('--products',       action='store_true', help='Sync products → skus')
-    g.add_argument('--inventory',      action='store_true', help='Sync inventory → skus')
+    g.add_argument('--inventory',      action='store_true', help='Sync stock levels → skus')
+    g.add_argument('--new-orders',     action='store_true', help='Scan for new orders by SO number sequence')
     g.add_argument('--order',          metavar='SO_NUMBER', help='Sync one order by SO number')
     g.add_argument('--refresh-orders', action='store_true', help='Refresh Nuport status for all Brain orders')
     p.add_argument('--from', dest='from_date', metavar='YYYY-MM-DD',
                    help='Incremental date filter (inventory only)')
+    p.add_argument('--misses', type=int, default=50,
+                   help='Consecutive 404s before stopping new-orders scan (default: 50)')
     args = p.parse_args()
 
     if args.products:
         sync_products()
     elif args.inventory:
         sync_inventory(updated_from=args.from_date)
+    elif args.new_orders:
+        sync_new_orders(max_misses=args.misses)
     elif args.order:
         sync_single_order(args.order)
     elif args.refresh_orders:
