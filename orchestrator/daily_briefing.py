@@ -17,11 +17,13 @@ from orchestrator.telegram_alert import send as telegram_send
 
 def build_briefing() -> str:
     yesterday = date.today() - timedelta(days=1)
+    today     = date.today()
     y = yesterday.strftime('%Y-%m-%d')
+    t = today.strftime('%Y-%m-%d')
 
     with get_connection() as conn:
 
-        # ── Orders ──────────────────────────────────────────────────
+        # ── Orders yesterday ─────────────────────────────────────
         orders = conn.execute(text("""
             SELECT
                 COUNT(*) AS total,
@@ -33,6 +35,11 @@ def build_briefing() -> str:
             FROM orders
             WHERE DATE(order_date) = :d
         """), {'d': y}).mappings().one()
+
+        # ── Today so far ──────────────────────────────────────────
+        today_count = conn.execute(text("""
+            SELECT COUNT(*) FROM orders WHERE DATE(order_date) = :d
+        """), {'d': t}).scalar() or 0
 
         # ── Top SKUs yesterday ────────────────────────────────────
         top_skus = conn.execute(text("""
@@ -52,14 +59,14 @@ def build_briefing() -> str:
             FROM skus
             WHERE is_active = TRUE AND current_stock <= reorder_level
             ORDER BY current_stock ASC
-            LIMIT 5
+            LIMIT 8
         """)).mappings().all()
 
         # ── Pathao anomalies ──────────────────────────────────────
         anomalies = conn.execute(text("""
-            SELECT COUNT(*) AS cnt FROM pathao_waybills
+            SELECT COUNT(*) FROM pathao_waybills
             WHERE anomaly_flag = TRUE AND updated_at >= NOW() - INTERVAL '24 hours'
-        """)).scalar()
+        """)).scalar() or 0
 
         # ── Ad spend yesterday ────────────────────────────────────
         ads = conn.execute(text("""
@@ -76,12 +83,13 @@ def build_briefing() -> str:
             SELECT DATE(order_date) AS d, COUNT(*) AS n
             FROM orders
             WHERE order_date >= NOW() - INTERVAL '7 days'
+              AND order_date < NOW()
             GROUP BY DATE(order_date)
             ORDER BY d
         """)).mappings().all()
 
     # ── Format ───────────────────────────────────────────────────────────────
-    o = orders
+    o      = orders
     total  = o['total']  or 0
     gross  = o['gross']  or 0
     colltd = o['collected'] or 0
@@ -92,10 +100,20 @@ def build_briefing() -> str:
         f"<b>☀️ Winterfell Daily Briefing — {yesterday.strftime('%d %b %Y')}</b>",
         "",
         f"<b>📦 Orders</b>",
-        f"  Total: <b>{total}</b>  |  Returns: {rets} ({ret_pct}%)",
-        f"  Gross: ৳{gross:,.0f}  |  Collected: ৳{colltd:,.0f}",
-        f"  WooCommerce: {o['wc'] or 0}  |  Other: {o['other'] or 0}",
     ]
+
+    if total == 0:
+        lines.append(f"  No orders on {yesterday.strftime('%d %b')}.")
+    else:
+        lines += [
+            f"  Total: <b>{total}</b>  |  Returns: {rets} ({ret_pct}%)",
+            f"  Gross: ৳{gross:,.0f}  |  Collected: ৳{colltd:,.0f}",
+        ]
+        if o['wc'] or o['other']:
+            lines.append(f"  WooCommerce: {o['wc'] or 0}  |  Other: {o['other'] or 0}")
+
+    if today_count:
+        lines.append(f"  Today so far: {today_count} orders")
 
     if top_skus:
         lines += ["", "<b>🏆 Top SKUs</b>"]
@@ -106,7 +124,15 @@ def build_briefing() -> str:
     if low_stock:
         lines += ["", "<b>⚠️ Low Stock</b>"]
         for s in low_stock:
-            lines.append(f"  {s['product_name'] or s['sku']} — {s['current_stock']} left (reorder@{s['reorder_level']})")
+            stock = s['current_stock']
+            if stock < 0:
+                stock_str = f"deficit {abs(stock)}"
+            elif stock == 0:
+                stock_str = "OUT OF STOCK"
+            else:
+                stock_str = f"{stock} left"
+            name = (s['product_name'] or s['sku'])[:40]
+            lines.append(f"  {name} — {stock_str} (reorder@{s['reorder_level']})")
 
     if anomalies:
         lines += ["", f"<b>🚨 Pathao Anomalies: {anomalies} new</b>"]
@@ -121,9 +147,10 @@ def build_briefing() -> str:
         ]
 
     if trend:
+        peak = max(r['n'] for r in trend) or 1
         bar = ''.join(
-            '█' if r['n'] >= (total or 1) * 0.8
-            else '▓' if r['n'] >= (total or 1) * 0.5
+            '█' if r['n'] >= peak * 0.8
+            else '▓' if r['n'] >= peak * 0.4
             else '░'
             for r in trend
         )
