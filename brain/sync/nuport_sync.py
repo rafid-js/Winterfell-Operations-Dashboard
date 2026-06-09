@@ -395,8 +395,8 @@ def sync_new_orders(max_misses: int = 50):
             ok += 1
             misses = 0  # reset on success
 
-            # Check for return variants (-1PR, -2PR)
-            for suffix in ('1PR', '2PR', '3PR'):
+            # Check for return variants (FPR, 1PR, 2PR etc.)
+            for suffix in ('FPR', 'FPR-R', '1PR', '1PR-R', '2PR', '2PR-R', '3PR'):
                 so_variant = f"{so}-{suffix}"
                 try:
                     raw_v = nuport.get_order(so_variant)
@@ -502,7 +502,7 @@ def sync_active_orders(batch_size: int = 100):
                 if e.response.status_code == 404:
                     # Try flagged/return variant suffixes
                     found = False
-                    for suffix in ('FPR', '1PR', '2PR', '3PR', 'PR'):
+                    for suffix in ('FPR', 'FPR-R', '1PR', '1PR-R', '2PR', '2PR-R', '3PR', 'PR'):
                         variant = f"{so}-{suffix}"
                         try:
                             raw_v = nuport.get_order(variant)
