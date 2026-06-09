@@ -207,6 +207,12 @@ def products_page():
     return render_template_string(PRODUCTS_HTML)
 
 
+_PRODUCT_STATUS_FILTERS = {
+    'delivered': "o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered', 'COMPLETED')",
+    'on_hold':   "o.nuport_status IN ('ON_HOLD', 'On_Hold', 'on_hold')",
+    'total':     "o.nuport_status IS NOT NULL",
+}
+
 @app.route('/api/products')
 @login_required
 def api_products():
@@ -214,9 +220,13 @@ def api_products():
         limit = max(1, min(500, int(request.args.get('limit', 50))))
         days_raw = request.args.get('days')
         days = max(1, min(3650, int(days_raw))) if days_raw else None
+        group = request.args.get('group', 'delivered')
+        if group not in _PRODUCT_STATUS_FILTERS:
+            group = 'delivered'
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
+    status_filter = _PRODUCT_STATUS_FILTERS[group]
     date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
 
     with get_connection() as conn:
@@ -235,7 +245,7 @@ def api_products():
             FROM order_items oi
             JOIN orders o ON oi.so_number = o.so_number
             LEFT JOIN skus s ON oi.sku = s.sku
-            WHERE o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered', 'COMPLETED')
+            WHERE {status_filter}
               {date_filter}
             GROUP BY base_name
             ORDER BY qty_sold DESC
@@ -256,6 +266,7 @@ def api_products():
         ],
         'limit': limit,
         'days': days,
+        'group': group,
         'count': len(rows),
     })
 
@@ -598,6 +609,12 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .limit-sel{background:#0d1117;border:1px solid #30363d;border-radius:6px;
            color:#e6edf3;font-size:.8rem;padding:5px 10px;cursor:pointer;outline:none}
 .limit-sel:focus{border-color:#388bfd}
+.group-tabs{display:flex;gap:0;margin-bottom:18px;border-bottom:2px solid #21262d}
+.group-tab{background:none;border:none;border-bottom:3px solid transparent;
+           color:#8b949e;cursor:pointer;font-size:.9rem;font-weight:500;
+           padding:10px 22px;transition:.2s;margin-bottom:-2px}
+.group-tab:hover{color:#e6edf3}
+.group-tab.active{border-bottom-color:#58a6ff;color:#58a6ff;font-weight:700}
 .result-info{color:#8b949e;font-size:.78rem;margin-bottom:10px;min-height:1.2em}
 .table-wrap{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:auto}
 table{width:100%;border-collapse:collapse}
@@ -637,7 +654,12 @@ td.rev{color:#e6edf3}
   </div>
 </header>
 <div class="container">
-  <div class="page-title">Top Products — Delivered Orders</div>
+  <div class="page-title">Top Products</div>
+  <div class="group-tabs">
+    <button class="group-tab active" onclick="setGroup('delivered',this)">Delivered</button>
+    <button class="group-tab" onclick="setGroup('on_hold',this)">On Hold (Pre-orders)</button>
+    <button class="group-tab" onclick="setGroup('total',this)">Total (All Statuses)</button>
+  </div>
   <div class="filters">
     <span class="filter-label">Period</span>
     <div class="period-btns">
@@ -675,6 +697,14 @@ td.rev{color:#e6edf3}
 </div>
 <script>
 let currentDays = null;
+let currentGroup = 'delivered';
+
+function setGroup(group, btn) {
+  currentGroup = group;
+  document.querySelectorAll('.group-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  load();
+}
 
 function setPeriod(days, btn) {
   currentDays = days;
@@ -697,7 +727,7 @@ async function load() {
   if (!tbody || !limitEl) return;
 
   const limit = limitEl.value;
-  const params = new URLSearchParams({limit});
+  const params = new URLSearchParams({limit, group: currentGroup});
   if (currentDays) params.set('days', currentDays);
 
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
@@ -713,12 +743,15 @@ async function load() {
       return;
     }
 
-    const label = currentDays === 90 ? 'last 3 months'
-                : currentDays === 30 ? 'last month'
-                : currentDays === 7  ? 'last 7 days'
-                : currentDays        ? 'last ' + currentDays + ' days'
-                : 'all time';
-    if (infoEl) infoEl.textContent = 'Showing top ' + data.products.length + ' products — ' + label;
+    const periodLabel = currentDays === 90 ? 'last 3 months'
+                      : currentDays === 30 ? 'last month'
+                      : currentDays === 7  ? 'last 7 days'
+                      : currentDays        ? 'last ' + currentDays + ' days'
+                      : 'all time';
+    const groupLabel = currentGroup === 'on_hold' ? 'On Hold'
+                     : currentGroup === 'total'   ? 'All Statuses'
+                     : 'Delivered';
+    if (infoEl) infoEl.textContent = 'Showing top ' + data.products.length + ' products — ' + groupLabel + ' · ' + periodLabel;
 
     tbody.innerHTML = data.products.map(p => {
       const thumb = p.image_url
