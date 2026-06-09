@@ -210,6 +210,9 @@ def products_page():
 _PRODUCT_STATUS_FILTERS = {
     'delivered': "o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered', 'COMPLETED')",
     'on_hold':   "o.nuport_status IN ('ON_HOLD', 'On_Hold', 'on_hold')",
+    'return':    "o.nuport_status ILIKE '%return%'",
+    'exchange':  "o.nuport_status ILIKE '%exchange%'",
+    'flagged':   "o.nuport_status ILIKE '%flag%'",
     'total':     "o.nuport_status IS NOT NULL",
 }
 
@@ -223,14 +226,38 @@ def api_products():
         group = request.args.get('group', 'delivered')
         if group not in _PRODUCT_STATUS_FILTERS:
             group = 'delivered'
-        search = request.args.get('search', '').strip()[:100]
+        search   = request.args.get('search',   '').strip()[:100]
+        category = request.args.get('category', '').strip()[:200]
+        channel  = request.args.get('channel',  '').strip()[:200]
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
     status_filter = _PRODUCT_STATUS_FILTERS[group]
-    date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
-    search_filter = "AND COALESCE(s.product_name, oi.product_name) ILIKE :search_pat" if search else ""
-    sql_params = {'search_pat': f'%{search}%'} if search else {}
+    date_filter   = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
+    sql_params    = {}
+
+    search_filter = ""
+    if search:
+        search_filter = "AND COALESCE(s.product_name, oi.product_name) ILIKE :search_pat"
+        sql_params['search_pat'] = f'%{search}%'
+
+    category_filter = ""
+    if category:
+        kws = [k.strip() for k in category.split(',') if k.strip()]
+        if kws:
+            conds = ' OR '.join(f"COALESCE(s.product_name, oi.product_name) ILIKE :pcat{i}" for i in range(len(kws)))
+            category_filter = f"AND ({conds})"
+            for i, kw in enumerate(kws):
+                sql_params[f'pcat{i}'] = f'%{kw}%'
+
+    channel_filter = ""
+    if channel:
+        chs = [c.strip() for c in channel.split(',') if c.strip()]
+        if chs:
+            conds = ' OR '.join(f"o.source_channel ILIKE :pch{i}" for i in range(len(chs)))
+            channel_filter = f"AND ({conds})"
+            for i, ch in enumerate(chs):
+                sql_params[f'pch{i}'] = f'%{ch}%'
 
     with get_connection() as conn:
         rows = conn.execute(text(f"""
@@ -251,6 +278,8 @@ def api_products():
             WHERE {status_filter}
               {date_filter}
               {search_filter}
+              {category_filter}
+              {channel_filter}
               AND oi.product_name IS NOT NULL
               AND oi.product_name !~ '^[0-9][0-9.,\\s]*$'
             GROUP BY base_name
@@ -739,12 +768,36 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .limit-sel{background:#0d1117;border:1px solid #30363d;border-radius:6px;
            color:#e6edf3;font-size:.8rem;padding:5px 10px;cursor:pointer;outline:none}
 .limit-sel:focus{border-color:#388bfd}
-.group-tabs{display:flex;gap:0;margin-bottom:18px;border-bottom:2px solid #21262d}
+.group-tabs{display:flex;gap:0;margin-bottom:0;border-bottom:2px solid #21262d}
 .group-tab{background:none;border:none;border-bottom:3px solid transparent;
            color:#8b949e;cursor:pointer;font-size:.9rem;font-weight:500;
            padding:10px 22px;transition:.2s;margin-bottom:-2px}
 .group-tab:hover{color:#e6edf3}
 .group-tab.active{border-bottom-color:#58a6ff;color:#58a6ff;font-weight:700}
+.group-tab.flagged-tab.active{border-bottom-color:#f85149;color:#f85149}
+.sub-tab-row{display:flex;gap:6px;padding:12px 0 12px;border-bottom:1px solid #21262d;margin-bottom:14px}
+.sub-tab{background:#0d1117;border:1px solid #30363d;border-radius:20px;
+         color:#8b949e;cursor:pointer;font-size:.8rem;font-weight:500;
+         padding:5px 16px;transition:.2s}
+.sub-tab:hover{border-color:#f85149;color:#ffa198}
+.sub-tab.active{background:#2d1417;border-color:#f85149;color:#f85149;font-weight:600}
+.group-tabs-spacer{margin-bottom:14px}
+.filter-toggle{background:#161b22;border:1px solid #30363d;border-radius:8px;
+               color:#8b949e;cursor:pointer;font-size:.8rem;padding:8px 14px;
+               display:flex;align-items:center;gap:6px;transition:.2s;white-space:nowrap}
+.filter-toggle:hover{border-color:#58a6ff;color:#79c0ff}
+.filter-toggle.on{border-color:#58a6ff;color:#58a6ff;background:#1c2a3f}
+.fbadge{background:#388bfd;color:#fff;border-radius:10px;font-size:.68rem;font-weight:700;
+        padding:1px 5px;display:none;line-height:1.4}
+.pf-panel{background:#161b22;border:1px solid #30363d;border-radius:10px;
+          padding:16px 18px;margin-bottom:12px;display:none;flex-direction:column;gap:14px}
+.fp-section{}
+.fp-sec-label{color:#8b949e;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.fp-chips{display:flex;flex-wrap:wrap;gap:6px}
+.fp-chip{background:#0d1117;border:1px solid #30363d;border-radius:20px;
+         color:#8b949e;cursor:pointer;font-size:.78rem;padding:4px 12px;transition:.2s}
+.fp-chip:hover{border-color:#58a6ff;color:#79c0ff}
+.fp-chip.on{background:#1c2a3f;border-color:#58a6ff;color:#58a6ff;font-weight:600}
 .result-info{color:#8b949e;font-size:.78rem;margin-bottom:10px;min-height:1.2em}
 .table-wrap{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:auto}
 table{width:100%;border-collapse:collapse}
@@ -812,8 +865,14 @@ td.rev{color:#e6edf3}
   <div class="group-tabs">
     <button class="group-tab active" onclick="setGroup('delivered',this)">Delivered</button>
     <button class="group-tab" onclick="setGroup('on_hold',this)">On Hold (Pre-orders)</button>
+    <button class="group-tab flagged-tab" onclick="setFlaggedMain(this)">Flagged</button>
     <button class="group-tab" onclick="setGroup('total',this)">Total (All Statuses)</button>
   </div>
+  <div class="sub-tab-row" id="flagged-sub-row" style="display:none">
+    <button class="sub-tab active" data-group="return" onclick="setSubGroup('return',this)">&#8617; Return</button>
+    <button class="sub-tab" data-group="exchange" onclick="setSubGroup('exchange',this)">&#8644; Exchange</button>
+  </div>
+  <div class="group-tabs-spacer" id="tabs-spacer" style="display:none"></div>
   <div class="toolbar">
     <div class="search-wrap">
       <span class="search-icon">&#128269;</span>
@@ -821,11 +880,42 @@ td.rev{color:#e6edf3}
              placeholder="Search products..." oninput="onSearchInput()" onkeydown="if(event.key==='Escape')clearSearch()">
       <button class="search-clear" id="search-clear" onclick="clearSearch()">&#215;</button>
     </div>
+    <button class="filter-toggle" id="filter-btn" onclick="toggleProdFilter()">
+      &#9881; Filters <span class="fbadge" id="fbadge"></span>
+    </button>
     <div class="export-wrap">
       <button class="export-btn" onclick="toggleExport(event)">&#8659; Export</button>
       <div class="export-menu" id="export-menu" style="display:none">
         <button class="export-opt" onclick="exportCSV()">&#128196; Export CSV</button>
         <button class="export-opt" onclick="exportPDF()">&#128424; PDF / Print</button>
+      </div>
+    </div>
+  </div>
+  <div class="pf-panel" id="pf-panel">
+    <div class="fp-section">
+      <div class="fp-sec-label">Product Category</div>
+      <div class="fp-chips" id="pcat-chips">
+        <button class="fp-chip" data-kw="t-shirt,tee" onclick="toggleChip(this)">T-Shirt / Tee</button>
+        <button class="fp-chip" data-kw="polo" onclick="toggleChip(this)">Polo</button>
+        <button class="fp-chip" data-kw="drop shoulder" onclick="toggleChip(this)">Drop Shoulder</button>
+        <button class="fp-chip" data-kw="pant,jean,trouser,cargo" onclick="toggleChip(this)">Pants / Jeans</button>
+        <button class="fp-chip" data-kw="jacket" onclick="toggleChip(this)">Jacket</button>
+        <button class="fp-chip" data-kw="shirt" onclick="toggleChip(this)">Shirt</button>
+        <button class="fp-chip" data-kw="hoodie,sweatshirt" onclick="toggleChip(this)">Hoodie</button>
+        <button class="fp-chip" data-kw="waffle" onclick="toggleChip(this)">Waffle Knit</button>
+        <button class="fp-chip" data-kw="corduroy" onclick="toggleChip(this)">Corduroy</button>
+      </div>
+    </div>
+    <div class="fp-section">
+      <div class="fp-sec-label">Order Channel</div>
+      <div class="fp-chips" id="pch-chips">
+        <button class="fp-chip" data-kw="whatsapp" onclick="toggleChip(this)">WhatsApp</button>
+        <button class="fp-chip" data-kw="facebook" onclick="toggleChip(this)">Facebook</button>
+        <button class="fp-chip" data-kw="instagram" onclick="toggleChip(this)">Instagram</button>
+        <button class="fp-chip" data-kw="website,woocommerce" onclick="toggleChip(this)">Website</button>
+        <button class="fp-chip" data-kw="tiktok" onclick="toggleChip(this)">TikTok</button>
+        <button class="fp-chip" data-kw="phone,call" onclick="toggleChip(this)">Phone / Call</button>
+        <button class="fp-chip" data-kw="messenger" onclick="toggleChip(this)">Messenger</button>
       </div>
     </div>
   </div>
@@ -875,7 +965,60 @@ function setGroup(group, btn) {
   currentGroup = group;
   document.querySelectorAll('.group-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  const subRow = document.getElementById('flagged-sub-row');
+  const spacer = document.getElementById('tabs-spacer');
+  if (subRow) subRow.style.display = 'none';
+  if (spacer) spacer.style.display = 'none';
   load();
+}
+
+function setFlaggedMain(btn) {
+  document.querySelectorAll('.group-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const subRow = document.getElementById('flagged-sub-row');
+  const spacer = document.getElementById('tabs-spacer');
+  if (subRow) subRow.style.display = 'flex';
+  if (spacer) spacer.style.display = 'block';
+  const activeSub = subRow ? subRow.querySelector('.sub-tab.active') : null;
+  currentGroup = activeSub ? activeSub.dataset.group : 'return';
+  load();
+}
+
+function setSubGroup(group, btn) {
+  currentGroup = group;
+  document.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  load();
+}
+
+function toggleProdFilter() {
+  const panel = document.getElementById('pf-panel');
+  const btn   = document.getElementById('filter-btn');
+  const showing = panel.style.display === 'flex';
+  panel.style.display = showing ? 'none' : 'flex';
+  btn.classList.toggle('on', !showing || document.querySelectorAll('.fp-chip.on').length > 0);
+  updateProdBadge();
+}
+
+function toggleChip(el) {
+  el.classList.toggle('on');
+  updateProdBadge();
+  load();
+}
+
+function updateProdBadge() {
+  const cats  = document.querySelectorAll('#pcat-chips .fp-chip.on').length;
+  const chs   = document.querySelectorAll('#pch-chips .fp-chip.on').length;
+  const count = (cats > 0 ? 1 : 0) + (chs > 0 ? 1 : 0);
+  const badge = document.getElementById('fbadge');
+  const btn   = document.getElementById('filter-btn');
+  if (badge) { badge.textContent = count || ''; badge.style.display = count ? 'inline' : 'none'; }
+  if (btn)   btn.classList.toggle('on', count > 0 || document.getElementById('pf-panel').style.display === 'flex');
+}
+
+function getChipKws(containerId) {
+  return Array.from(document.querySelectorAll('#' + containerId + ' .fp-chip.on'))
+    .map(el => el.dataset.kw).join(',');
 }
 
 function setPeriod(days, btn) {
@@ -965,7 +1108,11 @@ async function load() {
   if (currentDays) params.set('days', currentDays);
   const searchEl = document.getElementById('search-input');
   const search = searchEl ? searchEl.value.trim() : '';
-  if (search) params.set('search', search);
+  const category = getChipKws('pcat-chips');
+  const channel  = getChipKws('pch-chips');
+  if (search)   params.set('search', search);
+  if (category) params.set('category', category);
+  if (channel)  params.set('channel', channel);
 
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
   if (infoEl) infoEl.innerHTML = '&nbsp;';
@@ -977,7 +1124,7 @@ async function load() {
     lastData = data.products || [];
 
     if (!data.products || !data.products.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="state">No data for this period.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="state">No data found.</td></tr>';
       return;
     }
 
@@ -987,6 +1134,9 @@ async function load() {
                       : currentDays        ? 'last ' + currentDays + ' days'
                       : 'all time';
     const groupLabel = currentGroup === 'on_hold' ? 'On Hold'
+                     : currentGroup === 'return'  ? 'Flagged — Return'
+                     : currentGroup === 'exchange'? 'Flagged — Exchange'
+                     : currentGroup === 'flagged' ? 'Flagged'
                      : currentGroup === 'total'   ? 'All Statuses'
                      : 'Delivered';
     if (infoEl) infoEl.textContent = 'Showing top ' + data.products.length + ' products — ' + groupLabel + ' · ' + periodLabel + (search ? ' · "' + search + '"' : '');
