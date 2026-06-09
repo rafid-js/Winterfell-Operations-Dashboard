@@ -223,6 +223,7 @@ _ORDER_TAB_FILTERS = {
     'approved':      "o.nuport_status ILIKE 'approv%'",
     'processing':    "o.nuport_status ILIKE 'process%'",
     'ready_to_ship': "o.nuport_status ILIKE 'ready%'",
+    'in_transit':    "o.nuport_status ILIKE '%transit%' OR o.nuport_status ILIKE 'in%transit'",
     'delivered':     "UPPER(o.nuport_status) IN ('DELIVERED', 'COMPLETED')",
     'flagged':       "o.nuport_status ILIKE '%flag%'",
     'cancelled':     "o.nuport_status ILIKE '%cancel%'",
@@ -1715,6 +1716,7 @@ tbody td.r{text-align:right;white-space:nowrap}
   <button class="tab-btn"        data-tab="approved"      onclick="setTab('approved')">Approved <span class="tab-count" id="cnt-approved">—</span></button>
   <button class="tab-btn"        data-tab="processing"    onclick="setTab('processing')">Processing <span class="tab-count" id="cnt-processing">—</span></button>
   <button class="tab-btn"        data-tab="ready_to_ship" onclick="setTab('ready_to_ship')">Ready To Ship <span class="tab-count" id="cnt-ready_to_ship">—</span></button>
+  <button class="tab-btn"        data-tab="in_transit"    onclick="setTab('in_transit')">In-Transit <span class="tab-count" id="cnt-in_transit">—</span></button>
   <button class="tab-btn"        data-tab="delivered"     onclick="setTab('delivered')">Delivered <span class="tab-count" id="cnt-delivered">—</span></button>
   <button class="tab-btn"        data-tab="flagged"       onclick="setTab('flagged')">Flagged <span class="tab-count" id="cnt-flagged">—</span></button>
   <button class="tab-btn"        data-tab="cancelled"     onclick="setTab('cancelled')">Cancelled <span class="tab-count" id="cnt-cancelled">—</span></button>
@@ -1798,7 +1800,7 @@ async function loadCounts(){
   try{
     var r=await fetch('/api/orders/counts');
     var d=await r.json();
-    ['all','pending','on_hold','approved','processing','ready_to_ship','delivered','flagged','cancelled'].forEach(function(k){
+    ['all','pending','on_hold','approved','processing','ready_to_ship','in_transit','delivered','flagged','cancelled'].forEach(function(k){
       var el=document.getElementById('cnt-'+k);
       if(el)el.textContent=(d[k]||0).toLocaleString();
     });
@@ -1847,7 +1849,7 @@ async function load(){
     var r=await fetch('/api/orders?'+params);
     var d=await r.json();
     renderPagination(currentPage,d.pages||1);
-    var tabLabels={all:'All Orders',pending:'Pending',on_hold:'On Hold',approved:'Approved',processing:'Processing',ready_to_ship:'Ready To Ship',delivered:'Delivered',flagged:'Flagged',cancelled:'Cancelled'};
+    var tabLabels={all:'All Orders',pending:'Pending',on_hold:'On Hold',approved:'Approved',processing:'Processing',ready_to_ship:'Ready To Ship',in_transit:'In-Transit',delivered:'Delivered',flagged:'Flagged',cancelled:'Cancelled'};
     var periodLabel=currentDays==='90'?'last 3 months':currentDays==='30'?'last month':currentDays==='7'?'last 7 days':'all time';
     document.getElementById('info').textContent='Showing '+(d.orders||[]).length+' of '+(d.total||0).toLocaleString()+' orders — '+(tabLabels[currentTab]||currentTab)+' · '+periodLabel+(search?' · "'+search+'"':'');
     if(!d.orders||!d.orders.length){tbody.innerHTML='<tr><td colspan="9" class="state">No orders found.</td></tr>';return;}
@@ -1899,7 +1901,7 @@ def api_orders_counts():
         """)).fetchall()
 
     counts = {k: 0 for k in ('all','pending','on_hold','approved','processing',
-                               'ready_to_ship','delivered','flagged','cancelled')}
+                               'ready_to_ship','in_transit','delivered','flagged','cancelled')}
     for s, cnt in rows:
         counts['all'] += cnt
         s2 = s.replace(' ', '_').replace('-', '_')
@@ -1908,6 +1910,7 @@ def api_orders_counts():
         elif s2.startswith('APPROV'):      counts['approved']      += cnt
         elif s2.startswith('PROCESS'):     counts['processing']    += cnt
         elif 'READY' in s2:                counts['ready_to_ship'] += cnt
+        elif 'TRANSIT' in s2:              counts['in_transit']    += cnt
         elif s2 in ('DELIVERED','COMPLETED'): counts['delivered']  += cnt
         elif 'FLAG'   in s2:               counts['flagged']       += cnt
         elif 'CANCEL' in s2:               counts['cancelled']     += cnt
