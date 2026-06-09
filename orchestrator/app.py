@@ -271,6 +271,68 @@ def api_products():
     })
 
 
+@app.route('/customers')
+@login_required
+def customers_page():
+    return render_template_string(CUSTOMERS_HTML)
+
+
+@app.route('/api/customers')
+@login_required
+def api_customers():
+    try:
+        limit = max(1, min(500, int(request.args.get('limit', 50))))
+        days_raw = request.args.get('days')
+        days = max(1, min(3650, int(days_raw))) if days_raw else None
+        group = request.args.get('group', 'delivered')
+        if group not in _PRODUCT_STATUS_FILTERS:
+            group = 'delivered'
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid parameters'}), 400
+
+    status_filter = _PRODUCT_STATUS_FILTERS[group]
+    date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
+
+    with get_connection() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                o.customer_phone                        AS phone,
+                MAX(COALESCE(c.name, o.customer_name))  AS cust_name,
+                MAX(c.address)                          AS location,
+                SUM(oi.quantity)                        AS qty_bought,
+                COUNT(DISTINCT o.so_number)             AS total_orders,
+                COALESCE(SUM(oi.total_price), 0)        AS revenue
+            FROM orders o
+            LEFT JOIN customers c ON o.customer_phone = c.phone
+            LEFT JOIN order_items oi ON o.so_number = oi.so_number
+            WHERE {status_filter}
+              {date_filter}
+              AND o.customer_phone IS NOT NULL
+            GROUP BY o.customer_phone
+            ORDER BY qty_bought DESC
+            LIMIT {limit}
+        """)).fetchall()
+
+    return jsonify({
+        'customers': [
+            {
+                'rank':     i + 1,
+                'name':     r[1] or '—',
+                'phone':    r[0] or '—',
+                'location': r[2] or '',
+                'qty':      int(r[3]) if r[3] else 0,
+                'orders':   int(r[4]) if r[4] else 0,
+                'revenue':  float(r[5]),
+            }
+            for i, r in enumerate(rows)
+        ],
+        'limit': limit,
+        'days':  days,
+        'group': group,
+        'count': len(rows),
+    })
+
+
 # ── HTML Templates ─────────────────────────────────────────────────────────────
 
 LOGIN_HTML = """<!DOCTYPE html>
@@ -398,6 +460,7 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
     <nav class="top-nav">
       <a href="/" class="nav-link active">Operations</a>
       <a href="/products" class="nav-link">Products</a>
+      <a href="/customers" class="nav-link">Customers</a>
     </nav>
     <span id="server-time">—</span>
     <a href="/logout" class="logout">Logout</a>
@@ -649,6 +712,7 @@ td.rev{color:#e6edf3}
     <nav class="top-nav">
       <a href="/" class="nav-link">Operations</a>
       <a href="/products" class="nav-link active">Products</a>
+      <a href="/customers" class="nav-link">Customers</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
   </div>
@@ -772,6 +836,209 @@ async function load() {
 
 function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+load();
+</script>
+</body>
+</html>"""
+
+
+CUSTOMERS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winterfell — Customers</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;
+       display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
+.header-right{display:flex;align-items:center;gap:16px}
+.top-nav{display:flex;gap:4px}
+.nav-link{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 12px;
+          border:1px solid transparent;border-radius:6px;transition:.2s}
+.nav-link:hover{border-color:#30363d;color:#e6edf3}
+.nav-link.active{border-color:#30363d;color:#e6edf3;background:#21262d}
+.logout{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 10px;
+        border:1px solid #30363d;border-radius:6px;transition:.2s}
+.logout:hover{border-color:#8b949e;color:#e6edf3}
+.container{max-width:1100px;margin:0 auto;padding:24px}
+.page-title{font-size:1.05rem;font-weight:700;color:#f0f6fc;margin-bottom:18px}
+.group-tabs{display:flex;gap:0;margin-bottom:18px;border-bottom:2px solid #21262d}
+.group-tab{background:none;border:none;border-bottom:3px solid transparent;
+           color:#8b949e;cursor:pointer;font-size:.9rem;font-weight:500;
+           padding:10px 22px;transition:.2s;margin-bottom:-2px}
+.group-tab:hover{color:#e6edf3}
+.group-tab.active{border-bottom-color:#58a6ff;color:#58a6ff;font-weight:700}
+.filters{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+         background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 18px;margin-bottom:16px}
+.filter-label{color:#8b949e;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+.period-btns{display:flex;gap:6px}
+.period-btn{background:#0d1117;border:1px solid #30363d;border-radius:6px;
+            color:#8b949e;cursor:pointer;font-size:.8rem;padding:5px 14px;transition:.2s}
+.period-btn:hover{border-color:#58a6ff;color:#79c0ff}
+.period-btn.active{background:#1c2a3f;border-color:#1f6feb;color:#58a6ff;font-weight:600}
+.sep{color:#30363d}
+.limit-sel{background:#0d1117;border:1px solid #30363d;border-radius:6px;
+           color:#e6edf3;font-size:.8rem;padding:5px 10px;cursor:pointer;outline:none}
+.limit-sel:focus{border-color:#388bfd}
+.result-info{color:#8b949e;font-size:.78rem;margin-bottom:10px;min-height:1.2em}
+.table-wrap{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:auto}
+table{width:100%;border-collapse:collapse}
+thead th{background:#1c2030;color:#8b949e;font-size:.7rem;font-weight:600;
+         text-transform:uppercase;letter-spacing:.05em;padding:10px 16px;text-align:left;
+         border-bottom:1px solid #30363d;white-space:nowrap}
+thead th.r{text-align:right}
+tbody tr{border-bottom:1px solid #21262d;transition:background .12s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:#1c2030}
+td{padding:10px 16px;font-size:.83rem;vertical-align:middle}
+td.rank{color:#8b949e;font-weight:600;width:44px}
+.cust-cell{display:flex;flex-direction:column;gap:3px;max-width:420px}
+.cust-name{color:#f0f6fc;font-weight:500;font-size:.87rem}
+.cust-meta{color:#8b949e;font-size:.74rem;display:flex;gap:10px;flex-wrap:wrap}
+.cust-phone{color:#79c0ff}
+.cust-loc{color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.qty{color:#3fb950;font-weight:600}
+td.ord{color:#79c0ff}
+td.rev{color:#e6edf3}
+.state{text-align:center;padding:48px;color:#8b949e;font-size:.85rem}
+.state.err{color:#f85149}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ Winterfell Operations</h1>
+  <div class="header-right">
+    <nav class="top-nav">
+      <a href="/" class="nav-link">Operations</a>
+      <a href="/products" class="nav-link">Products</a>
+      <a href="/customers" class="nav-link active">Customers</a>
+    </nav>
+    <a href="/logout" class="logout">Logout</a>
+  </div>
+</header>
+<div class="container">
+  <div class="page-title">Top Customers</div>
+  <div class="group-tabs">
+    <button class="group-tab active" onclick="setGroup('delivered',this)">Delivered</button>
+    <button class="group-tab" onclick="setGroup('on_hold',this)">On Hold (Pre-orders)</button>
+    <button class="group-tab" onclick="setGroup('total',this)">Total (All Statuses)</button>
+  </div>
+  <div class="filters">
+    <span class="filter-label">Period</span>
+    <div class="period-btns">
+      <button class="period-btn active" onclick="setPeriod(null,this)">All Time</button>
+      <button class="period-btn" onclick="setPeriod(90,this)">3 Months</button>
+      <button class="period-btn" onclick="setPeriod(30,this)">1 Month</button>
+      <button class="period-btn" onclick="setPeriod(7,this)">7 Days</button>
+    </div>
+    <span class="sep">|</span>
+    <span class="filter-label">Show</span>
+    <select class="limit-sel" id="limit-sel" onchange="load()">
+      <option value="20">Top 20</option>
+      <option value="50" selected>Top 50</option>
+      <option value="100">Top 100</option>
+      <option value="200">Top 200</option>
+    </select>
+  </div>
+  <div class="result-info" id="result-info">&nbsp;</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Customer</th>
+          <th class="r">Qty Bought</th>
+          <th class="r">Orders</th>
+          <th class="r">Revenue (৳)</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="5" class="state">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+let currentDays = null;
+let currentGroup = 'delivered';
+
+function setGroup(group, btn) {
+  currentGroup = group;
+  document.querySelectorAll('.group-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  load();
+}
+
+function setPeriod(days, btn) {
+  currentDays = days;
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  load();
+}
+
+async function load() {
+  const tbody = document.getElementById('tbody');
+  const infoEl = document.getElementById('result-info');
+  const limitEl = document.getElementById('limit-sel');
+  if (!tbody || !limitEl) return;
+
+  const limit = limitEl.value;
+  const params = new URLSearchParams({limit, group: currentGroup});
+  if (currentDays) params.set('days', currentDays);
+
+  tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
+  if (infoEl) infoEl.innerHTML = '&nbsp;';
+
+  try {
+    const r = await fetch('/api/customers?' + params);
+    if (!r.ok) throw new Error(r.statusText);
+    const data = await r.json();
+
+    if (!data.customers || !data.customers.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="state">No data for this period.</td></tr>';
+      return;
+    }
+
+    const periodLabel = currentDays === 90 ? 'last 3 months'
+                      : currentDays === 30 ? 'last month'
+                      : currentDays === 7  ? 'last 7 days'
+                      : currentDays        ? 'last ' + currentDays + ' days'
+                      : 'all time';
+    const groupLabel = currentGroup === 'on_hold' ? 'On Hold'
+                     : currentGroup === 'total'   ? 'All Statuses'
+                     : 'Delivered';
+    if (infoEl) infoEl.textContent = 'Showing top ' + data.customers.length + ' customers — ' + groupLabel + ' · ' + periodLabel;
+
+    tbody.innerHTML = data.customers.map(c => {
+      const loc = c.location ? (c.location.length > 50 ? c.location.slice(0,50) + '...' : c.location) : '';
+      const meta = c.phone + (loc ? ' · ' + loc : '');
+      return '<tr>' +
+        '<td class="rank r">' + c.rank + '</td>' +
+        '<td><div class="cust-cell">' +
+          '<div class="cust-name">' + esc(c.name) + '</div>' +
+          '<div class="cust-meta">' +
+            '<span class="cust-phone">' + esc(c.phone) + '</span>' +
+            (loc ? '<span class="cust-loc" title="' + esc(c.location) + '">' + esc(loc) + '</span>' : '') +
+          '</div>' +
+        '</div></td>' +
+        '<td class="r qty">' + c.qty.toLocaleString() + '</td>' +
+        '<td class="r ord">' + c.orders.toLocaleString() + '</td>' +
+        '<td class="r rev">' + Math.round(c.revenue).toLocaleString() + '</td>' +
+        '</tr>';
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="5" class="state err">Failed to load: ' + e.message + '</td></tr>';
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 load();
