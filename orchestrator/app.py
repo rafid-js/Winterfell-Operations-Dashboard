@@ -216,6 +216,18 @@ _PRODUCT_STATUS_FILTERS = {
     'total':     "o.nuport_status IS NOT NULL",
 }
 
+_ORDER_TAB_FILTERS = {
+    'all':           "1=1",
+    'pending':       "o.nuport_status ILIKE 'pending'",
+    'on_hold':       "o.nuport_status ILIKE 'on%hold'",
+    'approved':      "o.nuport_status ILIKE 'approv%'",
+    'processing':    "o.nuport_status ILIKE 'process%'",
+    'ready_to_ship': "o.nuport_status ILIKE 'ready%'",
+    'delivered':     "UPPER(o.nuport_status) IN ('DELIVERED', 'COMPLETED')",
+    'flagged':       "o.nuport_status ILIKE '%flag%'",
+    'cancelled':     "o.nuport_status ILIKE '%cancel%'",
+}
+
 @app.route('/api/products')
 @login_required
 def api_products():
@@ -557,6 +569,7 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
       <a href="/" class="nav-link active">Operations</a>
       <a href="/products" class="nav-link">Products</a>
       <a href="/customers" class="nav-link">Customers</a>
+      <a href="/orders" class="nav-link">Orders</a>
     </nav>
     <span id="server-time">—</span>
     <a href="/logout" class="logout">Logout</a>
@@ -856,6 +869,7 @@ td.rev{color:#e6edf3}
       <a href="/" class="nav-link">Operations</a>
       <a href="/products" class="nav-link active">Products</a>
       <a href="/customers" class="nav-link">Customers</a>
+      <a href="/orders" class="nav-link">Orders</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
   </div>
@@ -1288,6 +1302,7 @@ td.rev{color:#e6edf3}
       <a href="/" class="nav-link">Operations</a>
       <a href="/products" class="nav-link">Products</a>
       <a href="/customers" class="nav-link active">Customers</a>
+      <a href="/orders" class="nav-link">Orders</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
   </div>
@@ -1599,6 +1614,408 @@ load();
 </script>
 </body>
 </html>"""
+
+
+ORDERS_HTML = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Orders \xb7 Winterfell</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.brand{font-size:1rem;font-weight:600;color:#e6edf3;text-decoration:none}
+.top-nav{display:flex;gap:4px}
+.nav-link{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 12px;border-radius:6px;border:1px solid transparent}
+.nav-link:hover{border-color:#30363d;color:#e6edf3}
+.nav-link.active{border-color:#30363d;color:#e6edf3;background:#21262d}
+.logout{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 12px;border-radius:6px;border:1px solid transparent}
+.logout:hover{color:#f85149;border-color:#30363d}
+main{padding:24px;max-width:1600px;margin:0 auto}
+h1{font-size:1.4rem;font-weight:600;margin-bottom:20px}
+.tab-row{display:flex;gap:0;border-bottom:1px solid #30363d;margin-bottom:20px;overflow-x:auto;scrollbar-width:none}
+.tab-row::-webkit-scrollbar{display:none}
+.tab-btn{background:none;border:none;color:#8b949e;padding:10px 16px;cursor:pointer;font-size:.82rem;white-space:nowrap;border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px}
+.tab-btn:hover{color:#e6edf3}
+.tab-btn.active{color:#e6edf3;border-bottom-color:#e6edf3}
+.tab-count{background:#21262d;color:#8b949e;font-size:.7rem;padding:1px 6px;border-radius:10px;min-width:18px;text-align:center}
+.tab-btn.active .tab-count{background:#30363d;color:#e6edf3}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.search-wrap{position:relative;flex:1;min-width:200px;max-width:420px}
+.search-wrap input{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:7px 12px 7px 32px;color:#e6edf3;font-size:.83rem}
+.search-wrap input::placeholder{color:#6e7681}
+.search-wrap input:focus{outline:none;border-color:#58a6ff}
+.search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#6e7681;font-size:.78rem}
+.period-btns{display:flex;gap:4px}
+.period-btn{background:#21262d;border:1px solid #30363d;color:#8b949e;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:.78rem}
+.period-btn.active{background:#388bfd1a;border-color:#388bfd;color:#58a6ff}
+.period-btn:hover{border-color:#8b949e;color:#e6edf3}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+thead th{background:#161b22;color:#8b949e;font-weight:500;padding:8px 12px;text-align:left;border-bottom:1px solid #30363d;white-space:nowrap}
+thead th.r{text-align:right}
+tbody tr{border-bottom:1px solid #21262d}
+tbody tr:hover{background:#161b22}
+tbody td{padding:10px 12px;vertical-align:top}
+tbody td.r{text-align:right;white-space:nowrap}
+.state{color:#8b949e;text-align:center;padding:40px;font-size:.85rem}
+.state.err{color:#f85149}
+.so-num{color:#58a6ff;font-weight:600;font-size:.83rem}
+.so-badges{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.src-badge{font-size:.65rem;padding:1px 6px;border-radius:4px;font-weight:500}
+.src-web{background:#3d1f7d;color:#a371f7;border:1px solid #6e40c9}
+.src-fb{background:#0d2b4a;color:#58a6ff;border:1px solid #1f6feb}
+.src-wa{background:#0a2a14;color:#3fb950;border:1px solid #1a7f37}
+.src-ig{background:#3d1035;color:#f778ba;border:1px solid #c9287e}
+.src-other{background:#1c1c1c;color:#8b949e;border:1px solid #30363d}
+.st-badge{display:inline-block;font-size:.65rem;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap}
+.st-pending{background:#2d2600;color:#d4a700;border:1px solid #6a5600}
+.st-on-hold{background:#2d1a00;color:#e8a000;border:1px solid #7a4a00}
+.st-approved{background:#0d2d1a;color:#3fb950;border:1px solid #1a7f37}
+.st-processing{background:#0d1f3a;color:#58a6ff;border:1px solid #1f6feb}
+.st-ready{background:#1a0d2a;color:#a371f7;border:1px solid #6e40c9}
+.st-transit{background:#0a2a2a;color:#39d353;border:1px solid #196c37}
+.st-delivered{background:#0a2a14;color:#3fb950;border:1px solid #1a7f37}
+.st-flagged{background:#3d0c0a;color:#f85149;border:1px solid #8e1a1a}
+.st-cancelled{background:#1c1c1c;color:#6e7681;border:1px solid #30363d}
+.st-other{background:#1c1c1c;color:#8b949e;border:1px solid #30363d}
+.cust-name{color:#79c0ff;font-weight:500}
+.cust-phone{color:#8b949e;font-size:.77rem;margin-top:2px}
+.cust-region{color:#6e7681;font-size:.73rem;margin-top:1px}
+.date-main{color:#e6edf3;font-size:.8rem}
+.date-sub{color:#6e7681;font-size:.73rem;margin-top:2px}
+.amt-bold{font-weight:600;color:#e6edf3}
+.pagination{display:flex;align-items:center;gap:6px;justify-content:center;margin-top:20px;flex-wrap:wrap}
+.pg-btn{background:#21262d;border:1px solid #30363d;color:#8b949e;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.78rem;min-width:32px;text-align:center}
+.pg-btn:hover{border-color:#8b949e;color:#e6edf3}
+.pg-btn.active{background:#388bfd1a;border-color:#388bfd;color:#58a6ff}
+.pg-btn:disabled{opacity:.4;cursor:default;pointer-events:none}
+.pg-info{color:#6e7681;font-size:.78rem;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <a href="/" class="brand">Winterfell Ops</a>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link active">Orders</a>
+  </nav>
+  <a href="/logout" class="logout">Logout</a>
+</header>
+<main>
+<h1>Orders</h1>
+<div class="tab-row">
+  <button class="tab-btn active" data-tab="all"           onclick="setTab('all')">All Orders <span class="tab-count" id="cnt-all">—</span></button>
+  <button class="tab-btn"        data-tab="pending"       onclick="setTab('pending')">Pending <span class="tab-count" id="cnt-pending">—</span></button>
+  <button class="tab-btn"        data-tab="on_hold"       onclick="setTab('on_hold')">On Hold <span class="tab-count" id="cnt-on_hold">—</span></button>
+  <button class="tab-btn"        data-tab="approved"      onclick="setTab('approved')">Approved <span class="tab-count" id="cnt-approved">—</span></button>
+  <button class="tab-btn"        data-tab="processing"    onclick="setTab('processing')">Processing <span class="tab-count" id="cnt-processing">—</span></button>
+  <button class="tab-btn"        data-tab="ready_to_ship" onclick="setTab('ready_to_ship')">Ready To Ship <span class="tab-count" id="cnt-ready_to_ship">—</span></button>
+  <button class="tab-btn"        data-tab="delivered"     onclick="setTab('delivered')">Delivered <span class="tab-count" id="cnt-delivered">—</span></button>
+  <button class="tab-btn"        data-tab="flagged"       onclick="setTab('flagged')">Flagged <span class="tab-count" id="cnt-flagged">—</span></button>
+  <button class="tab-btn"        data-tab="cancelled"     onclick="setTab('cancelled')">Cancelled <span class="tab-count" id="cnt-cancelled">—</span></button>
+</div>
+<div class="toolbar">
+  <div class="search-wrap">
+    <span class="search-icon">&#128269;</span>
+    <input type="text" id="search" placeholder="Search SO#, customer name, phone, waybill..." oninput="onSearch()">
+  </div>
+  <div class="period-btns">
+    <button class="period-btn active" data-days="" onclick="setPeriod(this,'')">All Time</button>
+    <button class="period-btn" data-days="90" onclick="setPeriod(this,'90')">3 Months</button>
+    <button class="period-btn" data-days="30" onclick="setPeriod(this,'30')">1 Month</button>
+    <button class="period-btn" data-days="7"  onclick="setPeriod(this,'7')">7 Days</button>
+  </div>
+</div>
+<p id="info" style="color:#6e7681;font-size:.78rem;margin-bottom:12px"></p>
+<div class="tbl-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Invoice</th>
+      <th>Date</th>
+      <th>Customer</th>
+      <th>Status</th>
+      <th class="r">Items</th>
+      <th class="r">Receivable</th>
+      <th class="r">Paid</th>
+      <th class="r">Due</th>
+      <th class="r">Del. Fee</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"><tr><td colspan="9" class="state">Loading...</td></tr></tbody>
+</table>
+</div>
+<div class="pagination" id="pagination"></div>
+</main>
+<script>
+var currentTab='all', currentDays='', currentPage=1, searchTimer=null;
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmt(n){return Math.round(Number(n||0)).toLocaleString();}
+
+function statusClass(s){
+  if(!s)return 'st-other';
+  var u=s.toUpperCase();
+  if(u==='PENDING')return 'st-pending';
+  if(u.indexOf('ON')>=0&&u.indexOf('HOLD')>=0)return 'st-on-hold';
+  if(u.indexOf('APPROV')>=0)return 'st-approved';
+  if(u.indexOf('PROCESS')>=0)return 'st-processing';
+  if(u.indexOf('READY')>=0)return 'st-ready';
+  if(u.indexOf('TRANSIT')>=0)return 'st-transit';
+  if(u==='DELIVERED'||u==='COMPLETED')return 'st-delivered';
+  if(u.indexOf('FLAG')>=0)return 'st-flagged';
+  if(u.indexOf('CANCEL')>=0)return 'st-cancelled';
+  return 'st-other';
+}
+
+function sourceClass(s){
+  if(!s)return 'src-other';
+  var l=s.toLowerCase();
+  if(l.indexOf('woo')>=0||l.indexOf('web')>=0||l.indexOf('site')>=0)return 'src-web';
+  if(l.indexOf('face')>=0||l==='fb')return 'src-fb';
+  if(l.indexOf('whats')>=0||l==='wa')return 'src-wa';
+  if(l.indexOf('insta')>=0||l==='ig')return 'src-ig';
+  return 'src-other';
+}
+
+function sourceLabel(s){
+  if(!s)return '';
+  var l=s.toLowerCase();
+  if(l.indexOf('woo')>=0)return 'WOO';
+  if(l.indexOf('web')>=0||l.indexOf('site')>=0)return 'Web';
+  if(l.indexOf('face')>=0)return 'FB';
+  if(l.indexOf('whats')>=0)return 'WA';
+  if(l.indexOf('insta')>=0)return 'IG';
+  return s.slice(0,8);
+}
+
+async function loadCounts(){
+  try{
+    var r=await fetch('/api/orders/counts');
+    var d=await r.json();
+    ['all','pending','on_hold','approved','processing','ready_to_ship','delivered','flagged','cancelled'].forEach(function(k){
+      var el=document.getElementById('cnt-'+k);
+      if(el)el.textContent=(d[k]||0).toLocaleString();
+    });
+  }catch(e){}
+}
+
+function setTab(tab){
+  currentTab=tab;currentPage=1;
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab);});
+  load();
+}
+
+function setPeriod(btn,days){
+  currentDays=days;currentPage=1;
+  document.querySelectorAll('.period-btn').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  load();
+}
+
+function onSearch(){clearTimeout(searchTimer);searchTimer=setTimeout(function(){currentPage=1;load();},350);}
+
+function goPage(p){currentPage=p;load();window.scrollTo(0,0);}
+
+function renderPagination(page,pages){
+  var el=document.getElementById('pagination');
+  if(pages<=1){el.innerHTML='';return;}
+  var html='';
+  html+='<button class="pg-btn" onclick="goPage('+(page-1)+')" '+(page<=1?'disabled':'')+'>&#8249; Prev</button>';
+  var start=Math.max(1,page-2),end=Math.min(pages,page+2);
+  if(start>1){html+='<button class="pg-btn" onclick="goPage(1)">1</button>';if(start>2)html+='<span class="pg-info">&#8230;</span>';}
+  for(var i=start;i<=end;i++){html+='<button class="pg-btn'+(i===page?' active':'')+'" onclick="goPage('+i+')">'+i+'</button>';}
+  if(end<pages){if(end<pages-1)html+='<span class="pg-info">&#8230;</span>';html+='<button class="pg-btn" onclick="goPage('+pages+')">'+pages+'</button>';}
+  html+='<button class="pg-btn" onclick="goPage('+(page+1)+')" '+(page>=pages?'disabled':'')+'>Next &#8250;</button>';
+  html+='<span class="pg-info">Page '+page+' of '+pages+'</span>';
+  el.innerHTML=html;
+}
+
+async function load(){
+  var tbody=document.getElementById('tbody');
+  tbody.innerHTML='<tr><td colspan="9" class="state">Loading&#8230;</td></tr>';
+  var search=document.getElementById('search').value.trim();
+  var params=new URLSearchParams({tab:currentTab,page:currentPage});
+  if(currentDays)params.set('days',currentDays);
+  if(search)params.set('search',search);
+  try{
+    var r=await fetch('/api/orders?'+params);
+    var d=await r.json();
+    renderPagination(currentPage,d.pages||1);
+    var tabLabels={all:'All Orders',pending:'Pending',on_hold:'On Hold',approved:'Approved',processing:'Processing',ready_to_ship:'Ready To Ship',delivered:'Delivered',flagged:'Flagged',cancelled:'Cancelled'};
+    var periodLabel=currentDays==='90'?'last 3 months':currentDays==='30'?'last month':currentDays==='7'?'last 7 days':'all time';
+    document.getElementById('info').textContent='Showing '+(d.orders||[]).length+' of '+(d.total||0).toLocaleString()+' orders — '+(tabLabels[currentTab]||currentTab)+' · '+periodLabel+(search?' · "'+search+'"':'');
+    if(!d.orders||!d.orders.length){tbody.innerHTML='<tr><td colspan="9" class="state">No orders found.</td></tr>';return;}
+    tbody.innerHTML=d.orders.map(function(o){
+      var src=o.source?'<span class="src-badge '+sourceClass(o.source)+'">'+esc(sourceLabel(o.source))+'</span>':'';
+      var shipped=o.shipped_date?'<div class="date-sub">Shipped: '+esc(o.shipped_date)+'</div>':'';
+      var waybill=o.waybill?'<div class="date-sub">'+esc(o.waybill)+'</div>':'';
+      var paidCell=o.collected>0?'<span style="color:#3fb950">৳'+fmt(o.collected)+'</span>':'<span style="color:#6e7681">—</span>';
+      var dueCell=o.due>0?'<span style="color:#f85149">৳'+fmt(o.due)+'</span>':'<span style="color:#3fb950">✓</span>';
+      return '<tr>'+
+        '<td><div class="so-num">'+esc(o.so_number)+'</div><div class="so-badges">'+src+'</div></td>'+
+        '<td><div class="date-main">'+esc(o.order_date)+'</div>'+shipped+'</td>'+
+        '<td><div class="cust-name">'+esc(o.customer)+'</div><div class="cust-phone">'+esc(o.phone)+'</div>'+(o.region?'<div class="cust-region">'+esc(o.region)+'</div>':'')+'</td>'+
+        '<td><span class="st-badge '+statusClass(o.status)+'">'+esc(o.status)+'</span></td>'+
+        '<td class="r">'+fmt(o.items)+'</td>'+
+        '<td class="r"><span class="amt-bold">৳'+fmt(o.receivable)+'</span></td>'+
+        '<td class="r">'+paidCell+'</td>'+
+        '<td class="r">'+dueCell+'</td>'+
+        '<td class="r">৳'+fmt(o.delivery_fee)+waybill+'</td>'+
+        '</tr>';
+    }).join('');
+  }catch(e){
+    tbody.innerHTML='<tr><td colspan="9" class="state err">Failed to load: '+e.message+'</td></tr>';
+  }
+}
+
+loadCounts();
+load();
+</script>
+</body>
+</html>"""
+
+
+@app.route('/orders')
+@login_required
+def orders_page():
+    return render_template_string(ORDERS_HTML)
+
+
+@app.route('/api/orders/counts')
+@login_required
+def api_orders_counts():
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT UPPER(nuport_status) AS s, COUNT(*) AS cnt
+            FROM orders
+            WHERE nuport_status IS NOT NULL
+            GROUP BY UPPER(nuport_status)
+        """)).fetchall()
+
+    counts = {k: 0 for k in ('all','pending','on_hold','approved','processing',
+                               'ready_to_ship','delivered','flagged','cancelled')}
+    for s, cnt in rows:
+        counts['all'] += cnt
+        s2 = s.replace(' ', '_').replace('-', '_')
+        if   s2 == 'PENDING':              counts['pending']       += cnt
+        elif s2 == 'ON_HOLD':              counts['on_hold']       += cnt
+        elif s2.startswith('APPROV'):      counts['approved']      += cnt
+        elif s2.startswith('PROCESS'):     counts['processing']    += cnt
+        elif 'READY' in s2:                counts['ready_to_ship'] += cnt
+        elif s2 in ('DELIVERED','COMPLETED'): counts['delivered']  += cnt
+        elif 'FLAG'   in s2:               counts['flagged']       += cnt
+        elif 'CANCEL' in s2:               counts['cancelled']     += cnt
+    return jsonify(counts)
+
+
+@app.route('/api/orders')
+@login_required
+def api_orders():
+    tab    = request.args.get('tab', 'all')
+    try:
+        page = max(1, int(request.args.get('page', 1) or 1))
+    except (ValueError, TypeError):
+        page = 1
+    days   = request.args.get('days', '').strip()
+    search = request.args.get('search', '').strip()[:100]
+
+    status_filter = _ORDER_TAB_FILTERS.get(tab, '1=1')
+
+    date_filter = ''
+    if days.isdigit():
+        date_filter = f"AND o.order_date >= NOW() - INTERVAL '{int(days)} days'"
+
+    search_filter = ''
+    sql_params: dict = {}
+    if search:
+        search_filter = """AND (
+            o.so_number         ILIKE :srch
+            OR o.customer_name  ILIKE :srch
+            OR o.customer_phone ILIKE :srch
+            OR o.pathao_waybill ILIKE :srch
+        )"""
+        sql_params['srch'] = f'%{search}%'
+
+    limit  = 50
+    offset = (page - 1) * limit
+    sql_params['limit']  = limit
+    sql_params['offset'] = offset
+
+    with get_connection() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                o.so_number,
+                o.nuport_status,
+                o.source_channel,
+                o.order_date,
+                o.shipped_date,
+                o.customer_name,
+                o.customer_phone,
+                COALESCE(c.district, c.city, '')    AS region,
+                COALESCE(o.product_total, 0)        AS product_total,
+                COALESCE(o.delivery_fee, 0)         AS delivery_fee,
+                COALESCE(o.total_receivable, 0)     AS total_receivable,
+                COALESCE(o.collected_amount, 0)     AS collected_amount,
+                o.pathao_waybill,
+                COUNT(oi.id)                        AS item_count
+            FROM orders o
+            LEFT JOIN customers c    ON o.customer_phone = c.phone
+            LEFT JOIN order_items oi ON o.so_number = oi.so_number
+            WHERE {status_filter}
+              {date_filter}
+              {search_filter}
+            GROUP BY o.so_number, o.nuport_status, o.source_channel,
+                     o.order_date, o.shipped_date, o.customer_name, o.customer_phone,
+                     c.district, c.city, o.product_total, o.delivery_fee,
+                     o.total_receivable, o.collected_amount, o.pathao_waybill
+            ORDER BY o.order_date DESC NULLS LAST
+            LIMIT :limit OFFSET :offset
+        """), sql_params).fetchall()
+
+        count_params = {k: v for k, v in sql_params.items() if k not in ('limit', 'offset')}
+        total = conn.execute(text(f"""
+            SELECT COUNT(DISTINCT o.so_number)
+            FROM orders o
+            WHERE {status_filter}
+              {date_filter}
+              {search_filter}
+        """), count_params).scalar() or 0
+
+    orders = []
+    for r in rows:
+        recv = float(r[10])
+        coll = float(r[11])
+        orders.append({
+            'so_number':    r[0],
+            'status':       r[1] or '',
+            'source':       r[2] or '',
+            'order_date':   r[3].strftime('%d %b %Y, %I:%M %p') if r[3] else '',
+            'shipped_date': r[4].strftime('%d %b %Y') if r[4] else '',
+            'customer':     r[5] or '',
+            'phone':        r[6] or '',
+            'region':       r[7] or '',
+            'product_total': float(r[8]),
+            'delivery_fee':  float(r[9]),
+            'receivable':    recv,
+            'collected':     coll,
+            'due':           round(max(0.0, recv - coll), 2),
+            'waybill':       r[12] or '',
+            'items':         int(r[13] or 0),
+        })
+
+    return jsonify({
+        'orders': orders,
+        'total':  total,
+        'page':   page,
+        'pages':  max(1, (total + limit - 1) // limit),
+        'limit':  limit,
+    })
 
 
 if __name__ == '__main__':
