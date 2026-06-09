@@ -319,6 +319,7 @@ def api_customers():
               AND o.customer_phone IS NOT NULL
               AND LENGTH(o.customer_phone) >= 10
               AND o.customer_phone ~ '^[+0-9]'
+              AND o.so_number ~ '^(SO|WIN)-[0-9]+$'
             GROUP BY o.customer_phone
             ORDER BY {sort_col} DESC
             LIMIT {limit}
