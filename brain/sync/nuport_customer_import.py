@@ -139,14 +139,22 @@ def _get_raw():
 def run_migration():
     raw = _get_raw()
     cur = raw.cursor()
+
+    # Widen short VARCHAR columns — long addresses/names from CSV exceed VARCHAR(100)
+    for col in ('name', 'address', 'phone', 'email',
+                'nuport_customer_id', 'customer_tag', 'customer_source', 'district'):
+        cur.execute(f"ALTER TABLE customers ALTER COLUMN {col} TYPE TEXT")
+
+    # Add new columns
     added = 0
     for col, typ in _NEW_COLUMNS:
         cur.execute(f"ALTER TABLE customers ADD COLUMN IF NOT EXISTS {col} {typ}")
         added += 1
+
     raw.commit()
     cur.close()
     raw.close()
-    print(f"  ✓ Migration: {added} columns ensured\n")
+    print(f"  ✓ Migration: columns widened to TEXT, {added} new columns ensured\n")
 
 
 # ── CSV load ──────────────────────────────────────────────────────────────────
