@@ -296,18 +296,20 @@ def api_customers():
     with get_connection() as conn:
         rows = conn.execute(text(f"""
             SELECT
-                o.customer_phone                        AS phone,
-                MAX(COALESCE(c.name, o.customer_name))  AS cust_name,
-                MAX(c.address)                          AS location,
-                SUM(oi.quantity)                        AS qty_bought,
-                COUNT(DISTINCT o.so_number)             AS total_orders,
-                COALESCE(SUM(oi.total_price), 0)        AS revenue
+                o.customer_phone                           AS phone,
+                MAX(COALESCE(c.name, o.customer_name))     AS cust_name,
+                MAX(c.address)                             AS location,
+                COALESCE(SUM(oi.quantity), 0)              AS qty_bought,
+                COUNT(DISTINCT o.so_number)                AS total_orders,
+                COALESCE(SUM(oi.total_price), 0)           AS revenue
             FROM orders o
             LEFT JOIN customers c ON o.customer_phone = c.phone
             LEFT JOIN order_items oi ON o.so_number = oi.so_number
             WHERE {status_filter}
               {date_filter}
               AND o.customer_phone IS NOT NULL
+              AND LENGTH(o.customer_phone) >= 10
+              AND o.customer_phone ~ '^[+0-9]'
             GROUP BY o.customer_phone
             ORDER BY qty_bought DESC
             LIMIT {limit}
