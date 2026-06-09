@@ -109,6 +109,7 @@ SQL_ORDER = """
         order_date, shipped_date, delivered_date, updated_at
     ) VALUES %s
     ON CONFLICT (so_number) DO UPDATE SET
+        nuport_status  = COALESCE(EXCLUDED.nuport_status, orders.nuport_status),
         order_date     = COALESCE(orders.order_date,     EXCLUDED.order_date),
         shipped_date   = COALESCE(orders.shipped_date,   EXCLUDED.shipped_date),
         delivered_date = COALESCE(orders.delivered_date, EXCLUDED.delivered_date)
