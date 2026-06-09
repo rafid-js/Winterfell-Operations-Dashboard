@@ -13,6 +13,7 @@ Notes:
 - SO number (SO-XXXXX) is the universal order key across all systems.
 - SKU is the universal product key across all systems.
 """
+import re
 import sys
 import time
 import argparse
@@ -97,6 +98,23 @@ def _extract_waybill(o: dict):
 # Nuport renamed DELIVERED → COMPLETED at some point; treat them as the same
 _STATUS_ALIASES = {'COMPLETED': 'DELIVERED'}
 
+# Matches SO suffix: -FPR, -FPR-R, -1PR, -1PR-R, -2PR, etc.
+_SO_SUFFIX_RE = re.compile(r'-([A-Z0-9]+PR(?:-R)?)$', re.IGNORECASE)
+
+def _return_type_from_so(so: str | None) -> str | None:
+    """Derive return_type from SO number suffix."""
+    if not so:
+        return None
+    m = _SO_SUFFIX_RE.search(so)
+    if not m:
+        return None
+    suffix = m.group(1).upper()
+    if suffix.endswith('-R'):
+        return 'returned'          # FPR-R, 1PR-R — physically back at warehouse
+    if suffix == 'FPR':
+        return 'pending_return'    # still with courier, not yet received
+    return 'partial_return'        # 1PR, 2PR, 3PR — partial quantity returned
+
 def _normalize_status(status: str | None) -> str | None:
     if not status:
         return status
@@ -114,8 +132,9 @@ def map_order(o: dict) -> dict:
     delivery_fee = float(o.get('deliveryCharge') or 0)
     discount     = float(o.get('discountAmount') or 0)
 
+    so = o.get('internalId')
     return {
-        'so_number':        o.get('internalId'),
+        'so_number':        so,
         'nuport_order_id':  o.get('id'),
         'nuport_status':    _normalize_status(o.get('status')),
         'source_channel':   o.get('source'),
@@ -129,6 +148,7 @@ def map_order(o: dict) -> dict:
         'shipped_date':     _parse_dt(o.get('shippedAt')),
         'delivered_date':   _parse_dt(o.get('deliveredAt')),
         'pathao_waybill':   _extract_waybill(o),
+        'return_type':      _return_type_from_so(so),
     }
 
 
@@ -200,12 +220,14 @@ UPSERT_ORDER = text("""
         so_number, nuport_order_id, nuport_status, source_channel,
         customer_id, customer_name, customer_phone,
         product_total, delivery_fee, discount_amount, total_receivable,
-        pathao_waybill, order_date, shipped_date, delivered_date, updated_at
+        pathao_waybill, order_date, shipped_date, delivered_date,
+        return_type, updated_at
     ) VALUES (
         :so_number, :nuport_order_id, :nuport_status, :source_channel,
         :customer_id, :customer_name, :customer_phone,
         :product_total, :delivery_fee, :discount_amount, :total_receivable,
-        :pathao_waybill, :order_date, :shipped_date, :delivered_date, NOW()
+        :pathao_waybill, :order_date, :shipped_date, :delivered_date,
+        :return_type, NOW()
     )
     ON CONFLICT (so_number) DO UPDATE SET
         nuport_status    = EXCLUDED.nuport_status,
@@ -221,6 +243,7 @@ UPSERT_ORDER = text("""
         pathao_waybill   = COALESCE(EXCLUDED.pathao_waybill,   orders.pathao_waybill),
         shipped_date     = COALESCE(EXCLUDED.shipped_date,     orders.shipped_date),
         delivered_date   = COALESCE(EXCLUDED.delivered_date,   orders.delivered_date),
+        return_type      = COALESCE(EXCLUDED.return_type,      orders.return_type),
         updated_at       = NOW()
 """)
 
