@@ -210,9 +210,9 @@ def products_page():
 _PRODUCT_STATUS_FILTERS = {
     'delivered': "o.nuport_status IN ('DELIVERED', 'Delivered', 'delivered', 'COMPLETED')",
     'on_hold':   "o.nuport_status IN ('ON_HOLD', 'On_Hold', 'on_hold')",
-    'return':    "o.nuport_status ILIKE '%return%'",
-    'exchange':  "o.nuport_status ILIKE '%exchange%'",
-    'flagged':   "o.nuport_status ILIKE '%flag%'",
+    'return':    "o.nuport_status ILIKE '%return%' OR o.nuport_status ILIKE '%refund%'",
+    'exchange':  "o.nuport_status ILIKE '%exchange%' OR o.nuport_status ILIKE '%replacement%'",
+    'flagged':   "(o.nuport_status ILIKE '%flag%' OR o.nuport_status ILIKE '%return%' OR o.nuport_status ILIKE '%refund%' OR o.nuport_status ILIKE '%exchange%')",
     'total':     "o.nuport_status IS NOT NULL",
 }
 
@@ -869,7 +869,8 @@ td.rev{color:#e6edf3}
     <button class="group-tab" onclick="setGroup('total',this)">Total (All Statuses)</button>
   </div>
   <div class="sub-tab-row" id="flagged-sub-row" style="display:none">
-    <button class="sub-tab active" data-group="return" onclick="setSubGroup('return',this)">&#8617; Return</button>
+    <button class="sub-tab active" data-group="flagged" onclick="setSubGroup('flagged',this)">All Flagged</button>
+    <button class="sub-tab" data-group="return" onclick="setSubGroup('return',this)">&#8617; Return</button>
     <button class="sub-tab" data-group="exchange" onclick="setSubGroup('exchange',this)">&#8644; Exchange</button>
   </div>
   <div class="group-tabs-spacer" id="tabs-spacer" style="display:none"></div>
@@ -980,7 +981,7 @@ function setFlaggedMain(btn) {
   if (subRow) subRow.style.display = 'flex';
   if (spacer) spacer.style.display = 'block';
   const activeSub = subRow ? subRow.querySelector('.sub-tab.active') : null;
-  currentGroup = activeSub ? activeSub.dataset.group : 'return';
+  currentGroup = activeSub ? activeSub.dataset.group : 'flagged';
   load();
 }
 
