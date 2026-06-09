@@ -430,8 +430,9 @@ def sync_new_orders(max_misses: int = 50):
 
 
 _FINAL_STATUSES = (
-    'DELIVERED', 'COMPLETED', 'CANCELLED',
-    'delivered', 'completed', 'cancelled',
+    'DELIVERED', 'COMPLETED', 'CANCELLED', 'FLAGGED',
+    'delivered', 'completed', 'cancelled', 'flagged',
+    'Delivered', 'Completed', 'Cancelled', 'Flagged',
 )
 
 
