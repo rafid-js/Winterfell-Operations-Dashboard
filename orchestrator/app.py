@@ -287,31 +287,40 @@ def api_customers():
         group = request.args.get('group', 'delivered')
         if group not in _PRODUCT_STATUS_FILTERS:
             group = 'delivered'
+        sort = request.args.get('sort', 'orders')
+        if sort not in ('qty', 'orders', 'revenue'):
+            sort = 'orders'
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
     status_filter = _PRODUCT_STATUS_FILTERS[group]
     date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
+    sort_col = {'qty': 'qty_bought', 'orders': 'total_orders', 'revenue': 'revenue'}[sort]
 
     with get_connection() as conn:
         rows = conn.execute(text(f"""
+            WITH item_totals AS (
+                SELECT so_number, SUM(quantity) AS qty
+                FROM order_items
+                GROUP BY so_number
+            )
             SELECT
                 o.customer_phone                           AS phone,
                 MAX(COALESCE(c.name, o.customer_name))     AS cust_name,
                 MAX(c.address)                             AS location,
-                COALESCE(SUM(oi.quantity), 0)              AS qty_bought,
+                COALESCE(SUM(it.qty), 0)                   AS qty_bought,
                 COUNT(DISTINCT o.so_number)                AS total_orders,
-                COALESCE(SUM(oi.total_price), 0)           AS revenue
+                COALESCE(SUM(o.product_total), 0)          AS revenue
             FROM orders o
             LEFT JOIN customers c ON o.customer_phone = c.phone
-            LEFT JOIN order_items oi ON o.so_number = oi.so_number
+            LEFT JOIN item_totals it ON o.so_number = it.so_number
             WHERE {status_filter}
               {date_filter}
               AND o.customer_phone IS NOT NULL
               AND LENGTH(o.customer_phone) >= 10
               AND o.customer_phone ~ '^[+0-9]'
             GROUP BY o.customer_phone
-            ORDER BY qty_bought DESC
+            ORDER BY {sort_col} DESC
             LIMIT {limit}
         """)).fetchall()
 
@@ -331,6 +340,7 @@ def api_customers():
         'limit': limit,
         'days':  days,
         'group': group,
+        'sort':  sort,
         'count': len(rows),
     })
 
@@ -947,6 +957,13 @@ td.rev{color:#e6edf3}
       <option value="100">Top 100</option>
       <option value="200">Top 200</option>
     </select>
+    <span class="sep">|</span>
+    <span class="filter-label">Sort By</span>
+    <select class="limit-sel" id="sort-sel" onchange="load()">
+      <option value="orders" selected>Order Frequency</option>
+      <option value="qty">Qty Bought</option>
+      <option value="revenue">Revenue</option>
+    </select>
   </div>
   <div class="result-info" id="result-info">&nbsp;</div>
   <div class="table-wrap">
@@ -991,7 +1008,9 @@ async function load() {
   if (!tbody || !limitEl) return;
 
   const limit = limitEl.value;
-  const params = new URLSearchParams({limit, group: currentGroup});
+  const sortEl = document.getElementById('sort-sel');
+  const sort = sortEl ? sortEl.value : 'orders';
+  const params = new URLSearchParams({limit, group: currentGroup, sort});
   if (currentDays) params.set('days', currentDays);
 
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
@@ -1015,7 +1034,8 @@ async function load() {
     const groupLabel = currentGroup === 'on_hold' ? 'On Hold'
                      : currentGroup === 'total'   ? 'All Statuses'
                      : 'Delivered';
-    if (infoEl) infoEl.textContent = 'Showing top ' + data.customers.length + ' customers — ' + groupLabel + ' · ' + periodLabel;
+    const sortLabel = sort === 'qty' ? 'by qty' : sort === 'revenue' ? 'by revenue' : 'by order frequency';
+    if (infoEl) infoEl.textContent = 'Showing top ' + data.customers.length + ' customers — ' + groupLabel + ' · ' + periodLabel + ' · ' + sortLabel;
 
     tbody.innerHTML = data.customers.map(c => {
       const loc = c.location ? (c.location.length > 50 ? c.location.slice(0,50) + '...' : c.location) : '';
