@@ -177,11 +177,19 @@ def load_csv(path: str) -> list:
 # ── Build tuples ──────────────────────────────────────────────────────────────
 
 def build_tuples(rows: list) -> list:
-    tuples = []
+    # Deduplicate by phone — keep last record (most recent in CSV)
+    seen = {}
     for row in rows:
         phone = _str(row.get('Customer Phone'))
-        if not phone:
-            continue
+        if phone:
+            seen[phone] = row
+
+    dupes = len(rows) - len(seen)
+    if dupes:
+        print(f"  ⚠ Deduplicated {dupes} rows with duplicate phone numbers")
+
+    tuples = []
+    for phone, row in seen.items():
         tuples.append((
             phone,
             _str(row.get('Customer Name')),
