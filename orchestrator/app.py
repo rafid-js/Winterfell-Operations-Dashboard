@@ -296,22 +296,53 @@ def api_customers():
         sort = request.args.get('sort', 'orders')
         if sort not in ('qty', 'orders', 'revenue'):
             sort = 'orders'
-        search = request.args.get('search', '').strip()[:100]
-        has_email = request.args.get('has_email', '') == '1'
+        search     = request.args.get('search', '').strip()[:100]
+        has_email  = request.args.get('has_email', '') == '1'
+        category   = request.args.get('category', '').strip()[:200]
+        channel    = request.args.get('channel', '').strip()[:200]
+        min_orders = max(1, int(request.args.get('min_orders', 1)))
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
     status_filter = _PRODUCT_STATUS_FILTERS[group]
     date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
     sort_col = {'qty': 'qty_bought', 'orders': 'total_orders', 'revenue': 'revenue'}[sort]
-    search_filter = """AND (
+    sql_params = {}
+
+    search_filter = ""
+    if search:
+        search_filter = """AND (
             COALESCE(c.name, o.customer_name) ILIKE :search_pat OR
             o.customer_phone ILIKE :search_pat OR
             c.address ILIKE :search_pat OR
             c.email ILIKE :search_pat
-        )""" if search else ""
+        )"""
+        sql_params['search_pat'] = f'%{search}%'
+
     has_email_filter = "AND c.email IS NOT NULL AND c.email <> ''" if has_email else ""
-    sql_params = {'search_pat': f'%{search}%'} if search else {}
+
+    category_filter = ""
+    if category:
+        kws = [k.strip() for k in category.split(',') if k.strip()]
+        if kws:
+            conds = ' OR '.join(f"oi_cat.product_name ILIKE :cat{i}" for i in range(len(kws)))
+            category_filter = f"""AND EXISTS (
+                SELECT 1 FROM order_items oi_cat
+                WHERE oi_cat.so_number = o.so_number AND ({conds})
+            )"""
+            for i, kw in enumerate(kws):
+                sql_params[f'cat{i}'] = f'%{kw}%'
+
+    channel_filter = ""
+    if channel:
+        chs = [c.strip() for c in channel.split(',') if c.strip()]
+        if chs:
+            conds = ' OR '.join(f"o.source_channel ILIKE :ch{i}" for i in range(len(chs)))
+            channel_filter = f"AND ({conds})"
+            for i, ch in enumerate(chs):
+                sql_params[f'ch{i}'] = f'%{ch}%'
+
+    having_clause = f"HAVING COUNT(DISTINCT o.so_number) >= {min_orders}" if min_orders > 1 else ""
 
     with get_connection() as conn:
         rows = conn.execute(text(f"""
@@ -335,11 +366,14 @@ def api_customers():
               {date_filter}
               {search_filter}
               {has_email_filter}
+              {category_filter}
+              {channel_filter}
               AND o.customer_phone IS NOT NULL
               AND LENGTH(o.customer_phone) >= 10
               AND o.customer_phone ~ '^[+0-9]'
               AND o.so_number ~ '^(SO|WIN)-[0-9]+$'
             GROUP BY o.customer_phone
+            {having_clause}
             ORDER BY {sort_col} DESC
             LIMIT {limit}
         """), sql_params).fetchall()
@@ -1076,11 +1110,21 @@ td.rev{color:#e6edf3}
                display:flex;align-items:center;gap:6px;transition:.2s;white-space:nowrap}
 .filter-toggle:hover{border-color:#58a6ff;color:#79c0ff}
 .filter-toggle.on{border-color:#58a6ff;color:#58a6ff;background:#1c2a3f}
-.fdot{width:7px;height:7px;background:#388bfd;border-radius:50%;display:none}
+.fbadge{background:#388bfd;color:#fff;border-radius:10px;font-size:.68rem;font-weight:700;
+        padding:1px 5px;display:none;line-height:1.4}
 .filter-panel{background:#161b22;border:1px solid #30363d;border-radius:10px;
-              padding:12px 18px;margin-bottom:12px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+              padding:16px 18px;margin-bottom:12px;display:none;flex-direction:column;gap:14px}
+.fp-section{}
+.fp-sec-label{color:#8b949e;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.fp-chips{display:flex;flex-wrap:wrap;gap:6px}
+.fp-chip{background:#0d1117;border:1px solid #30363d;border-radius:20px;
+         color:#8b949e;cursor:pointer;font-size:.78rem;padding:4px 12px;transition:.2s}
+.fp-chip:hover{border-color:#58a6ff;color:#79c0ff}
+.fp-chip.on{background:#1c2a3f;border-color:#58a6ff;color:#58a6ff;font-weight:600}
+.fp-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #21262d}
 .fcheck{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:.82rem;color:#e6edf3}
 .fcheck input{width:14px;height:14px;cursor:pointer;accent-color:#388bfd}
+.fp-minorders{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#e6edf3}
 .cust-email-row{font-size:.72rem;color:#6e7681;margin-top:1px}
 .cust-email{color:#58a6ff;opacity:.85}
 </style>
@@ -1112,7 +1156,7 @@ td.rev{color:#e6edf3}
       <button class="search-clear" id="search-clear" onclick="clearSearch()">&#215;</button>
     </div>
     <button class="filter-toggle" id="filter-btn" onclick="toggleFilter()">
-      &#9881; Filters <span class="fdot" id="fdot"></span>
+      &#9881; Filters <span class="fbadge" id="fbadge"></span>
     </button>
     <div class="export-wrap">
       <button class="export-btn" onclick="toggleExport(event)">&#8659; Export</button>
@@ -1122,9 +1166,47 @@ td.rev{color:#e6edf3}
       </div>
     </div>
   </div>
-  <div class="filter-panel" id="filter-panel" style="display:none">
-    <span class="filter-label">Filter by:</span>
-    <label class="fcheck"><input type="checkbox" id="has-email" onchange="onFilterChange()"> Has Email</label>
+  <div class="filter-panel" id="filter-panel">
+    <div class="fp-section">
+      <div class="fp-sec-label">Product Category (bought at least one)</div>
+      <div class="fp-chips" id="cat-chips">
+        <button class="fp-chip" data-kw="t-shirt,tee" onclick="toggleChip(this)">T-Shirt / Tee</button>
+        <button class="fp-chip" data-kw="polo" onclick="toggleChip(this)">Polo</button>
+        <button class="fp-chip" data-kw="drop shoulder" onclick="toggleChip(this)">Drop Shoulder</button>
+        <button class="fp-chip" data-kw="pant,jean,trouser,cargo" onclick="toggleChip(this)">Pants / Jeans</button>
+        <button class="fp-chip" data-kw="jacket" onclick="toggleChip(this)">Jacket</button>
+        <button class="fp-chip" data-kw="shirt" onclick="toggleChip(this)">Shirt</button>
+        <button class="fp-chip" data-kw="hoodie,sweatshirt" onclick="toggleChip(this)">Hoodie</button>
+        <button class="fp-chip" data-kw="waffle" onclick="toggleChip(this)">Waffle Knit</button>
+        <button class="fp-chip" data-kw="corduroy" onclick="toggleChip(this)">Corduroy</button>
+      </div>
+    </div>
+    <div class="fp-section">
+      <div class="fp-sec-label">Order Channel</div>
+      <div class="fp-chips" id="ch-chips">
+        <button class="fp-chip" data-kw="whatsapp" onclick="toggleChip(this)">WhatsApp</button>
+        <button class="fp-chip" data-kw="facebook" onclick="toggleChip(this)">Facebook</button>
+        <button class="fp-chip" data-kw="instagram" onclick="toggleChip(this)">Instagram</button>
+        <button class="fp-chip" data-kw="website,woocommerce" onclick="toggleChip(this)">Website</button>
+        <button class="fp-chip" data-kw="tiktok" onclick="toggleChip(this)">TikTok</button>
+        <button class="fp-chip" data-kw="phone,call" onclick="toggleChip(this)">Phone / Call</button>
+        <button class="fp-chip" data-kw="messenger" onclick="toggleChip(this)">Messenger</button>
+      </div>
+    </div>
+    <div class="fp-row">
+      <label class="fcheck"><input type="checkbox" id="has-email" onchange="onFilterChange()"> Has Email</label>
+      <div class="fp-minorders">
+        <span>Min Orders</span>
+        <select class="limit-sel" id="min-orders" onchange="onFilterChange()">
+          <option value="1">Any</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+          <option value="5">5+</option>
+          <option value="10">10+</option>
+          <option value="20">20+</option>
+        </select>
+      </div>
+    </div>
   </div>
   <div class="filters">
     <span class="filter-label">Period</span>
@@ -1208,16 +1290,37 @@ function clearSearch() {
 function toggleFilter() {
   const panel = document.getElementById('filter-panel');
   const btn = document.getElementById('filter-btn');
-  const showing = panel.style.display !== 'none';
+  const showing = panel.style.display === 'flex';
   panel.style.display = showing ? 'none' : 'flex';
   btn.classList.toggle('on', !showing);
 }
 
-function onFilterChange() {
-  const hasEmail = document.getElementById('has-email').checked;
-  const dot = document.getElementById('fdot');
-  if (dot) dot.style.display = hasEmail ? 'inline-block' : 'none';
+function toggleChip(el) {
+  el.classList.toggle('on');
+  updateFilterBadge();
   load();
+}
+
+function onFilterChange() {
+  updateFilterBadge();
+  load();
+}
+
+function updateFilterBadge() {
+  const activeCats = document.querySelectorAll('#cat-chips .fp-chip.on').length;
+  const activeChs  = document.querySelectorAll('#ch-chips .fp-chip.on').length;
+  const hasEmail   = document.getElementById('has-email').checked;
+  const minOrders  = parseInt(document.getElementById('min-orders').value || '1') > 1;
+  const count = (activeCats > 0 ? 1 : 0) + (activeChs > 0 ? 1 : 0) + (hasEmail ? 1 : 0) + (minOrders ? 1 : 0);
+  const badge = document.getElementById('fbadge');
+  const btn   = document.getElementById('filter-btn');
+  if (badge) { badge.textContent = count || ''; badge.style.display = count ? 'inline' : 'none'; }
+  if (btn)   btn.classList.toggle('on', count > 0 || document.getElementById('filter-panel').style.display === 'flex');
+}
+
+function getActiveChipKws(containerId) {
+  return Array.from(document.querySelectorAll('#' + containerId + ' .fp-chip.on'))
+    .map(el => el.dataset.kw).join(',');
 }
 
 function toggleExport(e) {
@@ -1279,10 +1382,15 @@ async function load() {
   if (currentDays) params.set('days', currentDays);
   const searchEl = document.getElementById('search-input');
   const search = searchEl ? searchEl.value.trim() : '';
-  const hasEmailEl = document.getElementById('has-email');
-  const hasEmail = hasEmailEl ? hasEmailEl.checked : false;
-  if (search) params.set('search', search);
-  if (hasEmail) params.set('has_email', '1');
+  const hasEmail = document.getElementById('has-email')?.checked;
+  const minOrders = document.getElementById('min-orders')?.value || '1';
+  const category = getActiveChipKws('cat-chips');
+  const channel  = getActiveChipKws('ch-chips');
+  if (search)              params.set('search', search);
+  if (hasEmail)            params.set('has_email', '1');
+  if (category)            params.set('category', category);
+  if (channel)             params.set('channel', channel);
+  if (parseInt(minOrders) > 1) params.set('min_orders', minOrders);
 
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
   if (infoEl) infoEl.innerHTML = '&nbsp;';
