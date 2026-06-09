@@ -442,6 +442,10 @@ def sync_active_orders(batch_size: int = 100):
     Picks the oldest-updated orders first so all active orders cycle through evenly.
     Called every 15 min by cron_nuport — at batch_size=100 this keeps up to
     ~1 000 active orders refreshed within 2.5 hours at worst.
+
+    On 404: tries FPR / 1PR / 2PR / 3PR suffixes (flagged/return variants).
+    If a variant is found, it is upserted and the base SO is marked FLAGGED.
+    Garbage SO numbers (non SO-/WIN- patterns) are silently skipped.
     """
     print(f"\n=== Nuport Active Order Refresh  {datetime.now():%Y-%m-%d %H:%M} ===\n")
 
@@ -450,6 +454,7 @@ def sync_active_orders(batch_size: int = 100):
         rows = conn.execute(text(f"""
             SELECT so_number FROM orders
             WHERE so_number IS NOT NULL
+              AND (so_number LIKE 'SO-%%' OR so_number LIKE 'WIN-%%')
               AND (nuport_status IS NULL OR nuport_status NOT IN ({placeholders}))
             ORDER BY updated_at ASC NULLS FIRST
             LIMIT :n
@@ -462,7 +467,26 @@ def sync_active_orders(batch_size: int = 100):
     so_numbers = [r[0] for r in rows]
     print(f"  Refreshing {len(so_numbers)} active orders (oldest-updated first)\n")
 
-    ok = err = 0
+    ok = err = flagged_variants = 0
+
+    def _upsert(conn, raw, base_so=None):
+        cust = map_customer(raw)
+        customer_id = None
+        if cust:
+            row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
+            customer_id = row[0] if row else None
+            conn.commit()
+        order = map_order(raw)
+        order['customer_id'] = customer_id
+        conn.execute(UPSERT_ORDER, order)
+        if base_so and base_so != order['so_number']:
+            conn.execute(text("""
+                UPDATE orders SET nuport_status = 'FLAGGED', updated_at = NOW()
+                WHERE so_number = :s
+            """), {'s': base_so})
+        conn.commit()
+        return order
+
     with get_connection() as conn:
         for so in so_numbers:
             try:
@@ -470,24 +494,39 @@ def sync_active_orders(batch_size: int = 100):
                 if not raw.get('internalId'):
                     err += 1
                     continue
-                cust = map_customer(raw)
-                customer_id = None
-                if cust:
-                    row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
-                    customer_id = row[0] if row else None
-                    conn.commit()
-                order = map_order(raw)
-                order['customer_id'] = customer_id
-                conn.execute(UPSERT_ORDER, order)
-                conn.commit()
+                order = _upsert(conn, raw)
                 ok += 1
                 print(f"  ✓ {so} → {order['nuport_status']}")
                 time.sleep(0.15)
+            except requests.HTTPError as e:
+                if e.response.status_code == 404:
+                    # Try flagged/return variant suffixes
+                    found = False
+                    for suffix in ('FPR', '1PR', '2PR', '3PR', 'PR'):
+                        variant = f"{so}-{suffix}"
+                        try:
+                            raw_v = nuport.get_order(variant)
+                            if raw_v.get('internalId'):
+                                order_v = _upsert(conn, raw_v, base_so=so)
+                                flagged_variants += 1
+                                ok += 1
+                                print(f"  ✓ {so} → FLAGGED  (variant: {variant} → {order_v['nuport_status']})")
+                                found = True
+                                break
+                        except Exception:
+                            continue
+                    if not found:
+                        err += 1
+                        print(f"  ✗ {so}: 404 (no variant found)")
+                    time.sleep(0.15)
+                else:
+                    err += 1
+                    print(f"  ✗ {so}: HTTP {e.response.status_code}")
             except Exception as e:
                 err += 1
                 print(f"  ✗ {so}: {e}")
 
-    print(f"\n── Summary ── refreshed:{ok}  errors:{err}\n")
+    print(f"\n── Summary ── refreshed:{ok}  flagged-variants:{flagged_variants}  errors:{err}\n")
 
 
 def sync_orders_from_brain():
