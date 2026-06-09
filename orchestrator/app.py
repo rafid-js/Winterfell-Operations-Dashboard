@@ -263,13 +263,8 @@ def api_products():
         rows = conn.execute(text(f"""
             SELECT
                 TRIM(regexp_replace(
-                    TRIM(regexp_replace(
-                        COALESCE(s.product_name, oi.product_name),
-                        '\\s*-\\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[2-5][0-9])(\\s*\\([^)]*\\))?\\s*$',
-                        '',
-                        'i'
-                    )),
-                    '\\s+-\\s+[A-Za-z][A-Za-z\\s]*$',
+                    COALESCE(s.product_name, oi.product_name),
+                    '\\s*-\\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[2-5][0-9])(\\s*\\([^)]*\\))?\\s*$',
                     '',
                     'i'
                 )) AS base_name,
