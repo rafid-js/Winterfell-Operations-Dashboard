@@ -223,11 +223,14 @@ def api_products():
         group = request.args.get('group', 'delivered')
         if group not in _PRODUCT_STATUS_FILTERS:
             group = 'delivered'
+        search = request.args.get('search', '').strip()[:100]
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
     status_filter = _PRODUCT_STATUS_FILTERS[group]
     date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
+    search_filter = "AND COALESCE(s.product_name, oi.product_name) ILIKE :search_pat" if search else ""
+    sql_params = {'search_pat': f'%{search}%'} if search else {}
 
     with get_connection() as conn:
         rows = conn.execute(text(f"""
@@ -247,12 +250,13 @@ def api_products():
             LEFT JOIN skus s ON oi.sku = s.sku
             WHERE {status_filter}
               {date_filter}
+              {search_filter}
               AND oi.product_name IS NOT NULL
               AND oi.product_name !~ '^[0-9][0-9.,\\s]*$'
             GROUP BY base_name
             ORDER BY qty_sold DESC
             LIMIT {limit}
-        """)).fetchall()
+        """), sql_params).fetchall()
 
     return jsonify({
         'products': [
@@ -292,12 +296,22 @@ def api_customers():
         sort = request.args.get('sort', 'orders')
         if sort not in ('qty', 'orders', 'revenue'):
             sort = 'orders'
+        search = request.args.get('search', '').strip()[:100]
+        has_email = request.args.get('has_email', '') == '1'
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid parameters'}), 400
 
     status_filter = _PRODUCT_STATUS_FILTERS[group]
     date_filter = f"AND COALESCE(o.order_date, o.delivered_date, o.shipped_date) >= NOW() - INTERVAL '{days} days'" if days else ""
     sort_col = {'qty': 'qty_bought', 'orders': 'total_orders', 'revenue': 'revenue'}[sort]
+    search_filter = """AND (
+            COALESCE(c.name, o.customer_name) ILIKE :search_pat OR
+            o.customer_phone ILIKE :search_pat OR
+            c.address ILIKE :search_pat OR
+            c.email ILIKE :search_pat
+        )""" if search else ""
+    has_email_filter = "AND c.email IS NOT NULL AND c.email <> ''" if has_email else ""
+    sql_params = {'search_pat': f'%{search}%'} if search else {}
 
     with get_connection() as conn:
         rows = conn.execute(text(f"""
@@ -310,6 +324,7 @@ def api_customers():
                 o.customer_phone                           AS phone,
                 MAX(COALESCE(c.name, o.customer_name))     AS cust_name,
                 MAX(c.address)                             AS location,
+                MAX(c.email)                               AS email,
                 COALESCE(SUM(it.qty), 0)                   AS qty_bought,
                 COUNT(DISTINCT o.so_number)                AS total_orders,
                 COALESCE(SUM(o.product_total), 0)          AS revenue
@@ -318,6 +333,8 @@ def api_customers():
             LEFT JOIN item_totals it ON o.so_number = it.so_number
             WHERE {status_filter}
               {date_filter}
+              {search_filter}
+              {has_email_filter}
               AND o.customer_phone IS NOT NULL
               AND LENGTH(o.customer_phone) >= 10
               AND o.customer_phone ~ '^[+0-9]'
@@ -325,7 +342,7 @@ def api_customers():
             GROUP BY o.customer_phone
             ORDER BY {sort_col} DESC
             LIMIT {limit}
-        """)).fetchall()
+        """), sql_params).fetchall()
 
     return jsonify({
         'customers': [
@@ -334,9 +351,10 @@ def api_customers():
                 'name':     r[1] or '—',
                 'phone':    r[0] or '—',
                 'location': r[2] or '',
-                'qty':      int(r[3]) if r[3] else 0,
-                'orders':   int(r[4]) if r[4] else 0,
-                'revenue':  float(r[5]),
+                'email':    r[3] or '',
+                'qty':      int(r[4]) if r[4] else 0,
+                'orders':   int(r[5]) if r[5] else 0,
+                'revenue':  float(r[6]),
             }
             for i, r in enumerate(rows)
         ],
@@ -718,6 +736,29 @@ td.ord{color:#79c0ff}
 td.rev{color:#e6edf3}
 .state{text-align:center;padding:48px;color:#8b949e;font-size:.85rem}
 .state.err{color:#f85149}
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.search-wrap{position:relative;flex:1;max-width:420px}
+.search-input{width:100%;background:#161b22;border:1px solid #30363d;border-radius:8px;
+              color:#e6edf3;font-size:.85rem;padding:8px 30px 8px 34px;outline:none;transition:border-color .2s}
+.search-input:focus{border-color:#388bfd}
+.search-input::placeholder{color:#484f58}
+.search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);
+             color:#8b949e;font-size:.8rem;pointer-events:none}
+.search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+              background:none;border:none;color:#8b949e;cursor:pointer;font-size:.9rem;
+              padding:2px 4px;line-height:1;display:none}
+.search-clear:hover{color:#e6edf3}
+.export-wrap{position:relative;margin-left:auto}
+.export-btn{background:#161b22;border:1px solid #30363d;border-radius:8px;
+            color:#8b949e;cursor:pointer;font-size:.8rem;padding:8px 14px;
+            display:flex;align-items:center;gap:5px;transition:.2s;white-space:nowrap}
+.export-btn:hover{border-color:#3fb950;color:#3fb950}
+.export-menu{position:absolute;right:0;top:calc(100% + 4px);background:#161b22;
+             border:1px solid #30363d;border-radius:8px;padding:6px;z-index:100;
+             flex-direction:column;gap:2px;min-width:148px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.export-opt{background:none;border:none;color:#e6edf3;cursor:pointer;font-size:.82rem;
+            padding:8px 12px;text-align:left;border-radius:6px;transition:.15s;width:100%}
+.export-opt:hover{background:#21262d;color:#3fb950}
 </style>
 </head>
 <body>
@@ -739,6 +780,21 @@ td.rev{color:#e6edf3}
     <button class="group-tab" onclick="setGroup('on_hold',this)">On Hold (Pre-orders)</button>
     <button class="group-tab" onclick="setGroup('total',this)">Total (All Statuses)</button>
   </div>
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">&#128269;</span>
+      <input type="text" id="search-input" class="search-input"
+             placeholder="Search products..." oninput="onSearchInput()" onkeydown="if(event.key==='Escape')clearSearch()">
+      <button class="search-clear" id="search-clear" onclick="clearSearch()">&#215;</button>
+    </div>
+    <div class="export-wrap">
+      <button class="export-btn" onclick="toggleExport(event)">&#8659; Export</button>
+      <div class="export-menu" id="export-menu" style="display:none">
+        <button class="export-opt" onclick="exportCSV()">&#128196; Export CSV</button>
+        <button class="export-opt" onclick="exportPDF()">&#128424; PDF / Print</button>
+      </div>
+    </div>
+  </div>
   <div class="filters">
     <span class="filter-label">Period</span>
     <div class="period-btns">
@@ -754,6 +810,7 @@ td.rev{color:#e6edf3}
       <option value="50" selected>Top 50</option>
       <option value="100">Top 100</option>
       <option value="200">Top 200</option>
+      <option value="500">Top 500</option>
     </select>
   </div>
   <div class="result-info" id="result-info">&nbsp;</div>
@@ -777,6 +834,8 @@ td.rev{color:#e6edf3}
 <script>
 let currentDays = null;
 let currentGroup = 'delivered';
+let lastData = [];
+let searchTimer;
 
 function setGroup(group, btn) {
   currentGroup = group;
@@ -799,6 +858,68 @@ function imgErr(el) {
   el.replaceWith(ph);
 }
 
+function onSearchInput() {
+  const val = document.getElementById('search-input').value;
+  const clr = document.getElementById('search-clear');
+  if (clr) clr.style.display = val ? 'block' : 'none';
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 400);
+}
+
+function clearSearch() {
+  const el = document.getElementById('search-input');
+  const clr = document.getElementById('search-clear');
+  if (el) { el.value = ''; el.focus(); }
+  if (clr) clr.style.display = 'none';
+  load();
+}
+
+function toggleExport(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('export-menu');
+  menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+}
+document.addEventListener('click', () => {
+  const m = document.getElementById('export-menu');
+  if (m) m.style.display = 'none';
+});
+
+function exportCSV() {
+  const m = document.getElementById('export-menu'); if (m) m.style.display = 'none';
+  if (!lastData.length) return;
+  const rows = [['#','Product','Qty Sold','Orders','Revenue (BDT)']].concat(
+    lastData.map(p => [p.rank, p.name, p.qty, p.orders, Math.round(p.revenue)])
+  );
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8;'})),
+    download: 'products-' + currentGroup + '.csv'
+  });
+  a.click();
+}
+
+function exportPDF() {
+  const m = document.getElementById('export-menu'); if (m) m.style.display = 'none';
+  if (!lastData.length) return;
+  const groupLabel = currentGroup === 'on_hold' ? 'On Hold' : currentGroup === 'total' ? 'All Statuses' : 'Delivered';
+  const w = window.open('', '_blank');
+  w.document.write('<!DOCTYPE html><html><head><title>Top Products</title><style>'
+    + 'body{font-family:Arial,sans-serif;font-size:12px;padding:20px;color:#111}'
+    + 'h2{font-size:16px;margin-bottom:4px}p{color:#666;font-size:11px;margin-bottom:12px}'
+    + 'table{width:100%;border-collapse:collapse}'
+    + 'th{background:#f0f0f0;border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:11px}'
+    + 'td{border:1px solid #eee;padding:5px 10px;font-size:11px}.r{text-align:right}'
+    + 'tr:nth-child(even){background:#f9f9f9}'
+    + '</style></head><body>'
+    + '<h2>Top Products — ' + groupLabel + '</h2>'
+    + '<p>Generated ' + new Date().toLocaleString() + ' · ' + lastData.length + ' products</p>'
+    + '<table><thead><tr><th>#</th><th>Product</th><th class="r">Qty Sold</th><th class="r">Orders</th><th class="r">Revenue</th></tr></thead><tbody>'
+    + lastData.map(p => '<tr><td>' + p.rank + '</td><td>' + esc(p.name) + '</td><td class="r">' + p.qty.toLocaleString() + '</td><td class="r">' + p.orders.toLocaleString() + '</td><td class="r">' + Math.round(p.revenue).toLocaleString() + '</td></tr>').join('')
+    + '</tbody></table></body></html>');
+  w.document.close();
+  setTimeout(() => w.print(), 500);
+}
+
 async function load() {
   const tbody = document.getElementById('tbody');
   const infoEl = document.getElementById('result-info');
@@ -808,6 +929,9 @@ async function load() {
   const limit = limitEl.value;
   const params = new URLSearchParams({limit, group: currentGroup});
   if (currentDays) params.set('days', currentDays);
+  const searchEl = document.getElementById('search-input');
+  const search = searchEl ? searchEl.value.trim() : '';
+  if (search) params.set('search', search);
 
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
   if (infoEl) infoEl.innerHTML = '&nbsp;';
@@ -816,6 +940,7 @@ async function load() {
     const r = await fetch('/api/products?' + params);
     if (!r.ok) throw new Error(r.statusText);
     const data = await r.json();
+    lastData = data.products || [];
 
     if (!data.products || !data.products.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="state">No data for this period.</td></tr>';
@@ -830,7 +955,7 @@ async function load() {
     const groupLabel = currentGroup === 'on_hold' ? 'On Hold'
                      : currentGroup === 'total'   ? 'All Statuses'
                      : 'Delivered';
-    if (infoEl) infoEl.textContent = 'Showing top ' + data.products.length + ' products — ' + groupLabel + ' · ' + periodLabel;
+    if (infoEl) infoEl.textContent = 'Showing top ' + data.products.length + ' products — ' + groupLabel + ' · ' + periodLabel + (search ? ' · "' + search + '"' : '');
 
     tbody.innerHTML = data.products.map(p => {
       const thumb = p.image_url
@@ -923,6 +1048,41 @@ td.ord{color:#79c0ff}
 td.rev{color:#e6edf3}
 .state{text-align:center;padding:48px;color:#8b949e;font-size:.85rem}
 .state.err{color:#f85149}
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.search-wrap{position:relative;flex:1;max-width:420px}
+.search-input{width:100%;background:#161b22;border:1px solid #30363d;border-radius:8px;
+              color:#e6edf3;font-size:.85rem;padding:8px 30px 8px 34px;outline:none;transition:border-color .2s}
+.search-input:focus{border-color:#388bfd}
+.search-input::placeholder{color:#484f58}
+.search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);
+             color:#8b949e;font-size:.8rem;pointer-events:none}
+.search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+              background:none;border:none;color:#8b949e;cursor:pointer;font-size:.9rem;
+              padding:2px 4px;line-height:1;display:none}
+.search-clear:hover{color:#e6edf3}
+.export-wrap{position:relative;margin-left:auto}
+.export-btn{background:#161b22;border:1px solid #30363d;border-radius:8px;
+            color:#8b949e;cursor:pointer;font-size:.8rem;padding:8px 14px;
+            display:flex;align-items:center;gap:5px;transition:.2s;white-space:nowrap}
+.export-btn:hover{border-color:#3fb950;color:#3fb950}
+.export-menu{position:absolute;right:0;top:calc(100% + 4px);background:#161b22;
+             border:1px solid #30363d;border-radius:8px;padding:6px;z-index:100;
+             flex-direction:column;gap:2px;min-width:148px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.export-opt{background:none;border:none;color:#e6edf3;cursor:pointer;font-size:.82rem;
+            padding:8px 12px;text-align:left;border-radius:6px;transition:.15s;width:100%}
+.export-opt:hover{background:#21262d;color:#3fb950}
+.filter-toggle{background:#161b22;border:1px solid #30363d;border-radius:8px;
+               color:#8b949e;cursor:pointer;font-size:.8rem;padding:8px 14px;
+               display:flex;align-items:center;gap:6px;transition:.2s;white-space:nowrap}
+.filter-toggle:hover{border-color:#58a6ff;color:#79c0ff}
+.filter-toggle.on{border-color:#58a6ff;color:#58a6ff;background:#1c2a3f}
+.fdot{width:7px;height:7px;background:#388bfd;border-radius:50%;display:none}
+.filter-panel{background:#161b22;border:1px solid #30363d;border-radius:10px;
+              padding:12px 18px;margin-bottom:12px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.fcheck{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:.82rem;color:#e6edf3}
+.fcheck input{width:14px;height:14px;cursor:pointer;accent-color:#388bfd}
+.cust-email-row{font-size:.72rem;color:#6e7681;margin-top:1px}
+.cust-email{color:#58a6ff;opacity:.85}
 </style>
 </head>
 <body>
@@ -944,6 +1104,28 @@ td.rev{color:#e6edf3}
     <button class="group-tab" onclick="setGroup('on_hold',this)">On Hold (Pre-orders)</button>
     <button class="group-tab" onclick="setGroup('total',this)">Total (All Statuses)</button>
   </div>
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">&#128269;</span>
+      <input type="text" id="search-input" class="search-input"
+             placeholder="Search by name, phone, email..." oninput="onSearchInput()" onkeydown="if(event.key==='Escape')clearSearch()">
+      <button class="search-clear" id="search-clear" onclick="clearSearch()">&#215;</button>
+    </div>
+    <button class="filter-toggle" id="filter-btn" onclick="toggleFilter()">
+      &#9881; Filters <span class="fdot" id="fdot"></span>
+    </button>
+    <div class="export-wrap">
+      <button class="export-btn" onclick="toggleExport(event)">&#8659; Export</button>
+      <div class="export-menu" id="export-menu" style="display:none">
+        <button class="export-opt" onclick="exportCSV()">&#128196; Export CSV</button>
+        <button class="export-opt" onclick="exportPDF()">&#128424; PDF / Print</button>
+      </div>
+    </div>
+  </div>
+  <div class="filter-panel" id="filter-panel" style="display:none">
+    <span class="filter-label">Filter by:</span>
+    <label class="fcheck"><input type="checkbox" id="has-email" onchange="onFilterChange()"> Has Email</label>
+  </div>
   <div class="filters">
     <span class="filter-label">Period</span>
     <div class="period-btns">
@@ -959,6 +1141,7 @@ td.rev{color:#e6edf3}
       <option value="50" selected>Top 50</option>
       <option value="100">Top 100</option>
       <option value="200">Top 200</option>
+      <option value="500">Top 500</option>
     </select>
     <span class="sep">|</span>
     <span class="filter-label">Sort By</span>
@@ -989,6 +1172,8 @@ td.rev{color:#e6edf3}
 <script>
 let currentDays = null;
 let currentGroup = 'delivered';
+let lastData = [];
+let searchTimer;
 
 function setGroup(group, btn) {
   currentGroup = group;
@@ -1004,6 +1189,83 @@ function setPeriod(days, btn) {
   load();
 }
 
+function onSearchInput() {
+  const val = document.getElementById('search-input').value;
+  const clr = document.getElementById('search-clear');
+  if (clr) clr.style.display = val ? 'block' : 'none';
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 400);
+}
+
+function clearSearch() {
+  const el = document.getElementById('search-input');
+  const clr = document.getElementById('search-clear');
+  if (el) { el.value = ''; el.focus(); }
+  if (clr) clr.style.display = 'none';
+  load();
+}
+
+function toggleFilter() {
+  const panel = document.getElementById('filter-panel');
+  const btn = document.getElementById('filter-btn');
+  const showing = panel.style.display !== 'none';
+  panel.style.display = showing ? 'none' : 'flex';
+  btn.classList.toggle('on', !showing);
+}
+
+function onFilterChange() {
+  const hasEmail = document.getElementById('has-email').checked;
+  const dot = document.getElementById('fdot');
+  if (dot) dot.style.display = hasEmail ? 'inline-block' : 'none';
+  load();
+}
+
+function toggleExport(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('export-menu');
+  menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+}
+document.addEventListener('click', () => {
+  const m = document.getElementById('export-menu');
+  if (m) m.style.display = 'none';
+});
+
+function exportCSV() {
+  const m = document.getElementById('export-menu'); if (m) m.style.display = 'none';
+  if (!lastData.length) return;
+  const rows = [['#','Name','Phone','Location','Email','Qty Bought','Orders','Revenue (BDT)']].concat(
+    lastData.map(c => [c.rank, c.name, c.phone, c.location, c.email, c.qty, c.orders, Math.round(c.revenue)])
+  );
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8;'})),
+    download: 'customers-' + currentGroup + '.csv'
+  });
+  a.click();
+}
+
+function exportPDF() {
+  const m = document.getElementById('export-menu'); if (m) m.style.display = 'none';
+  if (!lastData.length) return;
+  const groupLabel = currentGroup === 'on_hold' ? 'On Hold' : currentGroup === 'total' ? 'All Statuses' : 'Delivered';
+  const w = window.open('', '_blank');
+  w.document.write('<!DOCTYPE html><html><head><title>Top Customers</title><style>'
+    + 'body{font-family:Arial,sans-serif;font-size:12px;padding:20px;color:#111}'
+    + 'h2{font-size:16px;margin-bottom:4px}p{color:#666;font-size:11px;margin-bottom:12px}'
+    + 'table{width:100%;border-collapse:collapse}'
+    + 'th{background:#f0f0f0;border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:11px}'
+    + 'td{border:1px solid #eee;padding:5px 10px;font-size:11px}.r{text-align:right}'
+    + 'tr:nth-child(even){background:#f9f9f9}'
+    + '</style></head><body>'
+    + '<h2>Top Customers — ' + groupLabel + '</h2>'
+    + '<p>Generated ' + new Date().toLocaleString() + ' · ' + lastData.length + ' customers</p>'
+    + '<table><thead><tr><th>#</th><th>Name</th><th>Phone</th><th>Email</th><th>Location</th><th class="r">Qty</th><th class="r">Orders</th><th class="r">Revenue</th></tr></thead><tbody>'
+    + lastData.map(c => '<tr><td>' + c.rank + '</td><td>' + esc(c.name) + '</td><td>' + esc(c.phone) + '</td><td>' + esc(c.email) + '</td><td>' + esc(c.location) + '</td><td class="r">' + c.qty.toLocaleString() + '</td><td class="r">' + c.orders.toLocaleString() + '</td><td class="r">' + Math.round(c.revenue).toLocaleString() + '</td></tr>').join('')
+    + '</tbody></table></body></html>');
+  w.document.close();
+  setTimeout(() => w.print(), 500);
+}
+
 async function load() {
   const tbody = document.getElementById('tbody');
   const infoEl = document.getElementById('result-info');
@@ -1015,6 +1277,12 @@ async function load() {
   const sort = sortEl ? sortEl.value : 'orders';
   const params = new URLSearchParams({limit, group: currentGroup, sort});
   if (currentDays) params.set('days', currentDays);
+  const searchEl = document.getElementById('search-input');
+  const search = searchEl ? searchEl.value.trim() : '';
+  const hasEmailEl = document.getElementById('has-email');
+  const hasEmail = hasEmailEl ? hasEmailEl.checked : false;
+  if (search) params.set('search', search);
+  if (hasEmail) params.set('has_email', '1');
 
   tbody.innerHTML = '<tr><td colspan="5" class="state">Loading...</td></tr>';
   if (infoEl) infoEl.innerHTML = '&nbsp;';
@@ -1023,6 +1291,7 @@ async function load() {
     const r = await fetch('/api/customers?' + params);
     if (!r.ok) throw new Error(r.statusText);
     const data = await r.json();
+    lastData = data.customers || [];
 
     if (!data.customers || !data.customers.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="state">No data for this period.</td></tr>';
@@ -1038,11 +1307,11 @@ async function load() {
                      : currentGroup === 'total'   ? 'All Statuses'
                      : 'Delivered';
     const sortLabel = sort === 'qty' ? 'by qty' : sort === 'revenue' ? 'by revenue' : 'by order frequency';
-    if (infoEl) infoEl.textContent = 'Showing top ' + data.customers.length + ' customers — ' + groupLabel + ' · ' + periodLabel + ' · ' + sortLabel;
+    if (infoEl) infoEl.textContent = 'Showing top ' + data.customers.length + ' customers — ' + groupLabel + ' · ' + periodLabel + ' · ' + sortLabel + (search ? ' · "' + search + '"' : '');
 
     tbody.innerHTML = data.customers.map(c => {
       const loc = c.location ? (c.location.length > 50 ? c.location.slice(0,50) + '...' : c.location) : '';
-      const meta = c.phone + (loc ? ' · ' + loc : '');
+      const email = c.email ? '<div class="cust-email-row"><span class="cust-email">' + esc(c.email) + '</span></div>' : '';
       return '<tr>' +
         '<td class="rank r">' + c.rank + '</td>' +
         '<td><div class="cust-cell">' +
@@ -1051,6 +1320,7 @@ async function load() {
             '<span class="cust-phone">' + esc(c.phone) + '</span>' +
             (loc ? '<span class="cust-loc" title="' + esc(c.location) + '">' + esc(loc) + '</span>' : '') +
           '</div>' +
+          email +
         '</div></td>' +
         '<td class="r qty">' + c.qty.toLocaleString() + '</td>' +
         '<td class="r ord">' + c.orders.toLocaleString() + '</td>' +
