@@ -45,8 +45,8 @@ MIGRATIONS = [
     ("alerts_log",     "related_sku", "ALTER TABLE alerts_log ALTER COLUMN related_sku TYPE VARCHAR(200)"),
 
     # Widen customer city/district — WC puts full address in city field
-    ("customers", "city",     "ALTER TABLE customers ALTER COLUMN city TYPE VARCHAR(500)"),
-    ("customers", "district", "ALTER TABLE customers ALTER COLUMN district TYPE VARCHAR(500)"),
+    ("customers", "city",     "ALTER TABLE customers ALTER COLUMN city TYPE TEXT"),
+    ("customers", "district", "ALTER TABLE customers ALTER COLUMN district TYPE TEXT"),
     ("customers", "name",     "ALTER TABLE customers ALTER COLUMN name TYPE VARCHAR(300)"),
     ("customers", "address",  "ALTER TABLE customers ALTER COLUMN address TYPE TEXT"),
 ]
