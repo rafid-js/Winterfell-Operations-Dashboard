@@ -247,6 +247,8 @@ def api_products():
             LEFT JOIN skus s ON oi.sku = s.sku
             WHERE {status_filter}
               {date_filter}
+              AND oi.product_name IS NOT NULL
+              AND oi.product_name !~ '^[0-9][0-9.,\\s]*$'
             GROUP BY base_name
             ORDER BY qty_sold DESC
             LIMIT {limit}
