@@ -203,7 +203,9 @@ def build_tuples(groups: dict):
         for row in rows:
             sku = _str(row.get('Product SKU'))
             if not sku:
-                continue
+                # Use product name as fallback so qty is still counted
+                fallback = _str(row.get('Product Name')) or 'UNKNOWN'
+                sku = '~' + fallback[:80]  # ~ prefix marks placeholder SKUs
             size, color = _parse_attr(row.get('Product Attributes'))
             key = (so_number, sku, size or '', color or '')
             qty        = _int(row.get('Product Qty')) or 1
