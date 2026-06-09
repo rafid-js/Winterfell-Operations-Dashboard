@@ -264,7 +264,7 @@ def api_products():
             SELECT
                 TRIM(regexp_replace(
                     COALESCE(s.product_name, oi.product_name),
-                    '\\s*-\\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[23][0-9])\\s*$',
+                    '\\s*-\\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[23][0-9])(\\s*\\([^)]*\\))?\\s*$',
                     '',
                     'i'
                 )) AS base_name,
