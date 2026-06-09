@@ -13,6 +13,7 @@ Notes:
 - SO number (SO-XXXXX) is the universal order key across all systems.
 - SKU is the universal product key across all systems.
 """
+import re
 import sys
 import time
 import argparse
@@ -97,6 +98,23 @@ def _extract_waybill(o: dict):
 # Nuport renamed DELIVERED → COMPLETED at some point; treat them as the same
 _STATUS_ALIASES = {'COMPLETED': 'DELIVERED'}
 
+# Matches SO suffix: -FPR, -FPR-R, -1PR, -1PR-R, -2PR, etc.
+_SO_SUFFIX_RE = re.compile(r'-([A-Z0-9]+PR(?:-R)?)$', re.IGNORECASE)
+
+def _return_type_from_so(so: str | None) -> str | None:
+    """Derive return_type from SO number suffix."""
+    if not so:
+        return None
+    m = _SO_SUFFIX_RE.search(so)
+    if not m:
+        return None
+    suffix = m.group(1).upper()
+    if suffix.endswith('-R'):
+        return 'returned'          # FPR-R, 1PR-R — physically back at warehouse
+    if suffix == 'FPR':
+        return 'pending_return'    # still with courier, not yet received
+    return 'partial_return'        # 1PR, 2PR, 3PR — partial quantity returned
+
 def _normalize_status(status: str | None) -> str | None:
     if not status:
         return status
@@ -114,8 +132,9 @@ def map_order(o: dict) -> dict:
     delivery_fee = float(o.get('deliveryCharge') or 0)
     discount     = float(o.get('discountAmount') or 0)
 
+    so = o.get('internalId')
     return {
-        'so_number':        o.get('internalId'),
+        'so_number':        so,
         'nuport_order_id':  o.get('id'),
         'nuport_status':    _normalize_status(o.get('status')),
         'source_channel':   o.get('source'),
@@ -129,6 +148,7 @@ def map_order(o: dict) -> dict:
         'shipped_date':     _parse_dt(o.get('shippedAt')),
         'delivered_date':   _parse_dt(o.get('deliveredAt')),
         'pathao_waybill':   _extract_waybill(o),
+        'return_type':      _return_type_from_so(so),
     }
 
 
@@ -200,12 +220,14 @@ UPSERT_ORDER = text("""
         so_number, nuport_order_id, nuport_status, source_channel,
         customer_id, customer_name, customer_phone,
         product_total, delivery_fee, discount_amount, total_receivable,
-        pathao_waybill, order_date, shipped_date, delivered_date, updated_at
+        pathao_waybill, order_date, shipped_date, delivered_date,
+        return_type, updated_at
     ) VALUES (
         :so_number, :nuport_order_id, :nuport_status, :source_channel,
         :customer_id, :customer_name, :customer_phone,
         :product_total, :delivery_fee, :discount_amount, :total_receivable,
-        :pathao_waybill, :order_date, :shipped_date, :delivered_date, NOW()
+        :pathao_waybill, :order_date, :shipped_date, :delivered_date,
+        :return_type, NOW()
     )
     ON CONFLICT (so_number) DO UPDATE SET
         nuport_status    = EXCLUDED.nuport_status,
@@ -221,6 +243,7 @@ UPSERT_ORDER = text("""
         pathao_waybill   = COALESCE(EXCLUDED.pathao_waybill,   orders.pathao_waybill),
         shipped_date     = COALESCE(EXCLUDED.shipped_date,     orders.shipped_date),
         delivered_date   = COALESCE(EXCLUDED.delivered_date,   orders.delivered_date),
+        return_type      = COALESCE(EXCLUDED.return_type,      orders.return_type),
         updated_at       = NOW()
 """)
 
@@ -395,8 +418,8 @@ def sync_new_orders(max_misses: int = 50):
             ok += 1
             misses = 0  # reset on success
 
-            # Check for return variants (-1PR, -2PR)
-            for suffix in ('1PR', '2PR', '3PR'):
+            # Check for return variants (FPR, 1PR, 2PR etc.)
+            for suffix in ('FPR', 'FPR-R', '1PR', '1PR-R', '2PR', '2PR-R', '3PR'):
                 so_variant = f"{so}-{suffix}"
                 try:
                     raw_v = nuport.get_order(so_variant)
@@ -442,6 +465,10 @@ def sync_active_orders(batch_size: int = 100):
     Picks the oldest-updated orders first so all active orders cycle through evenly.
     Called every 15 min by cron_nuport — at batch_size=100 this keeps up to
     ~1 000 active orders refreshed within 2.5 hours at worst.
+
+    On 404: tries FPR / 1PR / 2PR / 3PR suffixes (flagged/return variants).
+    If a variant is found, it is upserted and the base SO is marked FLAGGED.
+    Garbage SO numbers (non SO-/WIN- patterns) are silently skipped.
     """
     print(f"\n=== Nuport Active Order Refresh  {datetime.now():%Y-%m-%d %H:%M} ===\n")
 
@@ -450,6 +477,7 @@ def sync_active_orders(batch_size: int = 100):
         rows = conn.execute(text(f"""
             SELECT so_number FROM orders
             WHERE so_number IS NOT NULL
+              AND (so_number LIKE 'SO-%%' OR so_number LIKE 'WIN-%%')
               AND (nuport_status IS NULL OR nuport_status NOT IN ({placeholders}))
             ORDER BY updated_at ASC NULLS FIRST
             LIMIT :n
@@ -462,7 +490,26 @@ def sync_active_orders(batch_size: int = 100):
     so_numbers = [r[0] for r in rows]
     print(f"  Refreshing {len(so_numbers)} active orders (oldest-updated first)\n")
 
-    ok = err = 0
+    ok = err = flagged_variants = 0
+
+    def _upsert(conn, raw, base_so=None):
+        cust = map_customer(raw)
+        customer_id = None
+        if cust:
+            row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
+            customer_id = row[0] if row else None
+            conn.commit()
+        order = map_order(raw)
+        order['customer_id'] = customer_id
+        conn.execute(UPSERT_ORDER, order)
+        if base_so and base_so != order['so_number']:
+            conn.execute(text("""
+                UPDATE orders SET nuport_status = 'FLAGGED', updated_at = NOW()
+                WHERE so_number = :s
+            """), {'s': base_so})
+        conn.commit()
+        return order
+
     with get_connection() as conn:
         for so in so_numbers:
             try:
@@ -470,24 +517,39 @@ def sync_active_orders(batch_size: int = 100):
                 if not raw.get('internalId'):
                     err += 1
                     continue
-                cust = map_customer(raw)
-                customer_id = None
-                if cust:
-                    row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
-                    customer_id = row[0] if row else None
-                    conn.commit()
-                order = map_order(raw)
-                order['customer_id'] = customer_id
-                conn.execute(UPSERT_ORDER, order)
-                conn.commit()
+                order = _upsert(conn, raw)
                 ok += 1
                 print(f"  ✓ {so} → {order['nuport_status']}")
                 time.sleep(0.15)
+            except requests.HTTPError as e:
+                if e.response.status_code == 404:
+                    # Try flagged/return variant suffixes
+                    found = False
+                    for suffix in ('FPR', 'FPR-R', '1PR', '1PR-R', '2PR', '2PR-R', '3PR', 'PR'):
+                        variant = f"{so}-{suffix}"
+                        try:
+                            raw_v = nuport.get_order(variant)
+                            if raw_v.get('internalId'):
+                                order_v = _upsert(conn, raw_v, base_so=so)
+                                flagged_variants += 1
+                                ok += 1
+                                print(f"  ✓ {so} → FLAGGED  (variant: {variant} → {order_v['nuport_status']})")
+                                found = True
+                                break
+                        except Exception:
+                            continue
+                    if not found:
+                        err += 1
+                        print(f"  ✗ {so}: 404 (no variant found)")
+                    time.sleep(0.15)
+                else:
+                    err += 1
+                    print(f"  ✗ {so}: HTTP {e.response.status_code}")
             except Exception as e:
                 err += 1
                 print(f"  ✗ {so}: {e}")
 
-    print(f"\n── Summary ── refreshed:{ok}  errors:{err}\n")
+    print(f"\n── Summary ── refreshed:{ok}  flagged-variants:{flagged_variants}  errors:{err}\n")
 
 
 def sync_orders_from_brain():

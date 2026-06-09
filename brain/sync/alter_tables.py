@@ -11,6 +11,10 @@ sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
 from db import get_connection
 
 MIGRATIONS = [
+    # Return type — derived from SO number suffix (FPR, FPR-R, 1PR, etc.)
+    ("orders", "return_type",
+     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_type VARCHAR(30)"),
+
     # Universal WooCommerce order number (WIN-XXXXX format)
     ("orders",  "wc_order_number",
      "ALTER TABLE orders ADD COLUMN IF NOT EXISTS wc_order_number VARCHAR(30)"),
@@ -88,6 +92,13 @@ INDEXES = [
 ]
 
 NEW_TABLES = [
+    ("return_suffix_types", """
+        CREATE TABLE IF NOT EXISTS return_suffix_types (
+            suffix      VARCHAR(20) PRIMARY KEY,
+            label       VARCHAR(100) NOT NULL,
+            description TEXT
+        )
+    """),
     ("sync_log", """
         CREATE TABLE IF NOT EXISTS sync_log (
             id              SERIAL PRIMARY KEY,
@@ -204,6 +215,39 @@ def main():
         )).rowcount
         conn.commit()
         print(f"  ✓ cleaned up {orders_deleted} WC-XXXX orders, {items_deleted} items")
+
+        # Seed return_suffix_types reference table
+        conn.execute(text("""
+            INSERT INTO return_suffix_types (suffix, label, description) VALUES
+                ('FPR',   'Pending Return',   'Product is still with courier (Pathao), not yet received at our warehouse'),
+                ('FPR-R', 'Returned',         'Product received back at our warehouse — courier completed the return'),
+                ('1PR',   'Partial Return 1', 'First partial return — some items returned, remaining delivered'),
+                ('2PR',   'Partial Return 2', 'Second partial return on the same order'),
+                ('3PR',   'Partial Return 3', 'Third partial return on the same order'),
+                ('1PR-R', 'Partial Returned 1', 'First partial return received back at warehouse'),
+                ('2PR-R', 'Partial Returned 2', 'Second partial return received back at warehouse'),
+                ('PR',    'Partial Return',   'General partial return')
+            ON CONFLICT (suffix) DO UPDATE SET
+                label       = EXCLUDED.label,
+                description = EXCLUDED.description
+        """))
+        conn.commit()
+        print("  ✓ return_suffix_types seeded (8 suffix types)")
+
+        # Backfill return_type on existing orders from SO number suffix
+        backfill = conn.execute(text("""
+            UPDATE orders SET return_type =
+                CASE
+                    WHEN so_number ~* '-FPR-R$'           THEN 'returned'
+                    WHEN so_number ~* '-[0-9]+PR-R$'      THEN 'returned'
+                    WHEN so_number ~* '-FPR$'             THEN 'pending_return'
+                    WHEN so_number ~* '-[0-9]+PR$'        THEN 'partial_return'
+                END
+            WHERE so_number ~* '-(FPR(-R)?|[0-9]+PR(-R)?)$'
+              AND return_type IS NULL
+        """)).rowcount
+        conn.commit()
+        print(f"  ✓ backfilled return_type on {backfill} existing return orders")
 
     print("\n✓ Done\n")
 
