@@ -14,6 +14,7 @@ Notes:
 - SKU is the universal product key across all systems.
 """
 import sys
+import time
 import argparse
 import requests
 from datetime import datetime
@@ -428,6 +429,66 @@ def sync_new_orders(max_misses: int = 50):
         print("  No new orders found")
 
 
+_FINAL_STATUSES = (
+    'DELIVERED', 'COMPLETED', 'CANCELLED',
+    'delivered', 'completed', 'cancelled',
+)
+
+
+def sync_active_orders(batch_size: int = 100):
+    """
+    Refresh Nuport status for orders that haven't reached a final state yet.
+    Picks the oldest-updated orders first so all active orders cycle through evenly.
+    Called every 15 min by cron_nuport — at batch_size=100 this keeps up to
+    ~1 000 active orders refreshed within 2.5 hours at worst.
+    """
+    print(f"\n=== Nuport Active Order Refresh  {datetime.now():%Y-%m-%d %H:%M} ===\n")
+
+    placeholders = ', '.join(f"'{s}'" for s in _FINAL_STATUSES)
+    with get_connection() as conn:
+        rows = conn.execute(text(f"""
+            SELECT so_number FROM orders
+            WHERE so_number IS NOT NULL
+              AND (nuport_status IS NULL OR nuport_status NOT IN ({placeholders}))
+            ORDER BY updated_at ASC NULLS FIRST
+            LIMIT :n
+        """), {'n': batch_size}).fetchall()
+
+    if not rows:
+        print("  No active orders to refresh — all are in a final state")
+        return
+
+    so_numbers = [r[0] for r in rows]
+    print(f"  Refreshing {len(so_numbers)} active orders (oldest-updated first)\n")
+
+    ok = err = 0
+    with get_connection() as conn:
+        for so in so_numbers:
+            try:
+                raw = nuport.get_order(so)
+                if not raw.get('internalId'):
+                    err += 1
+                    continue
+                cust = map_customer(raw)
+                customer_id = None
+                if cust:
+                    row = conn.execute(UPSERT_CUSTOMER, cust).fetchone()
+                    customer_id = row[0] if row else None
+                    conn.commit()
+                order = map_order(raw)
+                order['customer_id'] = customer_id
+                conn.execute(UPSERT_ORDER, order)
+                conn.commit()
+                ok += 1
+                print(f"  ✓ {so} → {order['nuport_status']}")
+                time.sleep(0.15)
+            except Exception as e:
+                err += 1
+                print(f"  ✗ {so}: {e}")
+
+    print(f"\n── Summary ── refreshed:{ok}  errors:{err}\n")
+
+
 def sync_orders_from_brain():
     """Pull current Nuport status for every SO number already in the Brain."""
     print(f"\n=== Nuport Status Refresh — all Brain orders  {datetime.now():%Y-%m-%d %H:%M} ===\n")
@@ -474,15 +535,18 @@ def sync_orders_from_brain():
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Nuport → Brain sync')
     g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument('--products',       action='store_true', help='Sync products → skus')
-    g.add_argument('--inventory',      action='store_true', help='Sync stock levels → skus')
-    g.add_argument('--new-orders',     action='store_true', help='Scan for new orders by SO number sequence')
-    g.add_argument('--order',          metavar='SO_NUMBER', help='Sync one order by SO number')
-    g.add_argument('--refresh-orders', action='store_true', help='Refresh Nuport status for all Brain orders')
+    g.add_argument('--products',        action='store_true', help='Sync products → skus')
+    g.add_argument('--inventory',       action='store_true', help='Sync stock levels → skus')
+    g.add_argument('--new-orders',      action='store_true', help='Scan for new orders by SO number sequence')
+    g.add_argument('--active-orders',   action='store_true', help='Refresh status for active (non-final) orders')
+    g.add_argument('--order',           metavar='SO_NUMBER', help='Sync one order by SO number')
+    g.add_argument('--refresh-orders',  action='store_true', help='Refresh Nuport status for ALL Brain orders')
     p.add_argument('--from', dest='from_date', metavar='YYYY-MM-DD',
                    help='Incremental date filter (inventory only)')
     p.add_argument('--misses', type=int, default=50,
                    help='Consecutive 404s before stopping new-orders scan (default: 50)')
+    p.add_argument('--batch', type=int, default=100,
+                   help='Orders per run for --active-orders (default: 100)')
     args = p.parse_args()
 
     if args.products:
@@ -491,6 +555,8 @@ if __name__ == '__main__':
         sync_inventory(updated_from=args.from_date)
     elif args.new_orders:
         sync_new_orders(max_misses=args.misses)
+    elif args.active_orders:
+        sync_active_orders(batch_size=args.batch)
     elif args.order:
         sync_single_order(args.order)
     elif args.refresh_orders:
