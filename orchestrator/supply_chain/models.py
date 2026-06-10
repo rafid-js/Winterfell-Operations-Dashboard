@@ -461,3 +461,63 @@ def recalculate_po_status(conn, po_id):
     """), {'status': new_status, 'po_id': po_id})
 
     return new_status
+
+
+def update_po(po_id, data):
+    """Update editable fields of a PO."""
+    product_name = (data.get('product_name') or '').strip()
+    if not product_name:
+        raise ValueError('Product name is required')
+    try:
+        quantity = int(data.get('quantity_ordered') or 0)
+    except (TypeError, ValueError):
+        raise ValueError('Quantity must be a number')
+    if quantity <= 0:
+        raise ValueError('Quantity must be greater than zero')
+    due_date = data.get('due_date')
+    if not due_date:
+        raise ValueError('Due date is required')
+    unit_cost = data.get('unit_cost_bdt')
+    unit_cost = float(unit_cost) if unit_cost not in (None, '') else 0.0
+    advance_paid = data.get('advance_paid_bdt')
+    advance_paid = float(advance_paid) if advance_paid not in (None, '') else 0.0
+    total_cost = unit_cost * quantity
+    balance_due = total_cost - advance_paid
+    sku = data.get('sku') or None
+    if sku == '':
+        sku = None
+    notes = data.get('notes') or None
+    with get_connection() as conn:
+        supplier_id = None
+        if (data.get('supplier_name') or '').strip():
+            supplier_id = _upsert_supplier(conn, {'name': data['supplier_name']})
+        conn.execute(text("""
+            UPDATE purchase_orders
+            SET product_name     = :product_name,
+                sku              = :sku,
+                supplier_id      = COALESCE(:supplier_id, supplier_id),
+                quantity_ordered = :quantity,
+                unit_cost_bdt    = :unit_cost,
+                total_cost_bdt   = :total_cost,
+                advance_paid_bdt = :advance_paid,
+                balance_due_bdt  = :balance_due,
+                due_date         = :due_date,
+                expected_delivery= :due_date2,
+                notes            = :notes,
+                updated_at       = NOW()
+            WHERE po_id = :po_id
+        """), {
+            'product_name': product_name, 'sku': sku, 'supplier_id': supplier_id,
+            'quantity': quantity, 'unit_cost': unit_cost, 'total_cost': total_cost,
+            'advance_paid': advance_paid, 'balance_due': balance_due,
+            'due_date': due_date, 'due_date2': due_date, 'notes': notes, 'po_id': po_id,
+        })
+        conn.commit()
+
+
+def delete_po(po_id):
+    """Delete a PO and all its timeline events."""
+    with get_connection() as conn:
+        conn.execute(text("DELETE FROM po_timeline WHERE po_id = :po_id"), {'po_id': po_id})
+        conn.execute(text("DELETE FROM purchase_orders WHERE po_id = :po_id"), {'po_id': po_id})
+        conn.commit()

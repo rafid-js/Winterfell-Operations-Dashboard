@@ -103,6 +103,29 @@ def api_log_pm(po_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@sc_bp.route('/api/sc/po/<po_id>', methods=['PUT'])
+@sc_login_required
+def api_update_po(po_id):
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        models.update_po(po_id, data)
+        return jsonify({'success': True})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/api/sc/po/<po_id>', methods=['DELETE'])
+@sc_login_required
+def api_delete_po(po_id):
+    try:
+        models.delete_po(po_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ── shared CSS (dark theme, matches the rest of the app) ─────────────────────
 
 SC_CSS = """
@@ -161,6 +184,8 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
 .btn-primary:hover{filter:brightness(1.15)}
 .btn-ghost{background:#fff;color:var(--text-primary);border:0.5px solid var(--border)}
 .btn-ghost:hover{border-color:var(--text-tertiary)}
+.btn-danger{background:#fff;color:#791F1F;border:0.5px solid #F5C6C6}
+.btn-danger:hover{background:#FCEBEB;border-color:#E24B4A}
 
 .pills{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap;justify-content:flex-end}
 .pill{padding:6px 14px;border-radius:20px;border:0.5px solid var(--border);background:#F6F8FA;
@@ -743,6 +768,7 @@ var STAGES = ['PO Issued', 'Fabric', 'Trims', 'Sewing', 'QC', 'Delivered'];
 var STAGE_PCT = {'PO Issued':0,'Fabric':17,'Trims':33,'Sewing':50,'QC':83,'Delivered':100};
 var sel = {stage:'', status:'In progress', by:'Production Manager'};
 var POID = '';
+var currentPo = null;
 
 (function(){
   var parts = window.location.pathname.split('/');
@@ -787,6 +813,7 @@ function loadPo(){
       document.getElementById('banner').innerHTML = '<div><div class="ttl">' + esc(data.error) + '</div></div>';
       return;
     }
+    currentPo = data.po;
     renderBanner(data.po);
     renderBigStages(data.po.current_stage, data.po.expected_delivery || data.po.due_date);
     renderTimeline(data.timeline || [], data.po.current_stage, data.po.expected_delivery);
@@ -802,6 +829,10 @@ function renderBanner(po){
   h += '<div class="ttl"><span class="mono" style="color:#7F77DD">' + esc(po.po_id) + '</span></div>';
   h += '<div class="pname">' + esc(po.product_name || '') + '</div>';
   h += '<div class="meta">' + esc(po.supplier_name || 'No supplier') + ' &middot; ' + (po.quantity_ordered || 0) + ' pcs &middot; Due: ' + esc(arrive) + '</div>';
+  h += '<div style="display:flex;gap:8px;margin-top:12px">';
+  h += '<button class="btn btn-ghost" onclick="openEditModal()" style="font-size:12px">&#9998; Edit PO</button>';
+  h += '<button class="btn btn-danger" onclick="confirmDelete()" style="font-size:12px">&#128465; Delete</button>';
+  h += '</div>';
   h += '</div>';
   h += '<div class="right"><div>Expected arrival</div><div class="big">' + esc(arrive) + '</div></div>';
   document.getElementById('banner').innerHTML = h;
@@ -860,9 +891,12 @@ function renderTimeline(events, currentStage, expected){
     return r;
   }
 
+  var knownSet = {};
+  for(var ks=0; ks<STAGES.length; ks++) knownSet[STAGES[ks]] = true;
+  var extraKeys = Object.keys(stageMap).filter(function(k){ return !knownSet[k]; });
+
   for(var si=0; si<STAGES.length; si++){
     var sname = STAGES[si];
-    rendered[sname] = true;
     var sdone = si < idx;
     var sactive = si === idx;
     var spending = si > idx;
@@ -891,21 +925,20 @@ function renderTimeline(events, currentStage, expected){
       h += '</div>';
     }
     h += '</div>';
-  }
-
-  // Render events whose stage name is not in STAGES (e.g. "Other", "Delivery")
-  var extraKeys = Object.keys(stageMap).filter(function(k){ return !rendered[k]; });
-  for(var ki=0; ki<extraKeys.length; ki++){
-    var ename = extraKeys[ki];
-    var eevs = stageMap[ename];
-    h += '<div class="tl-sgroup">';
-    h += '<div class="tl-shead">';
-    h += '<span class="tl-sdot active"><span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span></span>';
-    h += '<span class="tl-sname active">' + esc(ename) + '</span>';
-    h += '</div>';
-    h += '<div class="tl-sevents">';
-    for(var ej=0; ej<eevs.length; ej++){ h += evHtml(eevs[ej]); }
-    h += '</div></div>';
+    // Extra stages (e.g. "Other") slot immediately after the active stage
+    if(sactive){
+      for(var ej=0; ej<extraKeys.length; ej++){
+        var ename = extraKeys[ej];
+        var eevs = stageMap[ename];
+        if(!eevs || eevs.length === 0) continue;
+        h += '<div class="tl-sgroup">';
+        h += '<div class="tl-shead"><span class="tl-sdot active"><span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span></span>';
+        h += '<span class="tl-sname active">' + esc(ename) + '</span></div>';
+        h += '<div class="tl-sevents">';
+        for(var em=0; em<eevs.length; em++){ h += evHtml(eevs[em]); }
+        h += '</div></div>';
+      }
+    }
   }
 
   if(h === ''){ h = '<div style="color:#8b949e">No events yet.</div>'; }
@@ -957,7 +990,86 @@ function showSuccess(data){
 
 function resetForm(){ window.location.reload(); }
 
+function openEditModal(){
+  if(!currentPo) return;
+  document.getElementById('e-product').value = currentPo.product_name || '';
+  document.getElementById('e-sku').value = currentPo.sku || '';
+  document.getElementById('e-supplier').value = currentPo.supplier_name || '';
+  document.getElementById('e-qty').value = currentPo.quantity_ordered || '';
+  document.getElementById('e-cost').value = currentPo.unit_cost_bdt || '';
+  document.getElementById('e-advance').value = currentPo.advance_paid_bdt || '';
+  document.getElementById('e-due').value = (currentPo.due_date || '').substring(0,10);
+  document.getElementById('e-notes').value = currentPo.notes || '';
+  document.getElementById('edit-err').classList.remove('show');
+  document.getElementById('edit-modal').classList.add('open');
+}
+function closeEditModal(){ document.getElementById('edit-modal').classList.remove('open'); }
+function editBgClick(e){ if(e.target === document.getElementById('edit-modal')) closeEditModal(); }
+
+function saveEdit(){
+  var err = document.getElementById('edit-err');
+  err.classList.remove('show');
+  var product = document.getElementById('e-product').value.trim();
+  var qty = document.getElementById('e-qty').value.trim();
+  var due = document.getElementById('e-due').value.trim();
+  if(!product){ err.innerHTML = 'Product name is required.'; err.classList.add('show'); return; }
+  if(!qty || Number(qty) <= 0){ err.innerHTML = 'Quantity must be greater than zero.'; err.classList.add('show'); return; }
+  if(!due){ err.innerHTML = 'Due date is required.'; err.classList.add('show'); return; }
+  var body = {
+    product_name: product,
+    sku: document.getElementById('e-sku').value.trim(),
+    supplier_name: document.getElementById('e-supplier').value.trim(),
+    quantity_ordered: Number(qty),
+    unit_cost_bdt: document.getElementById('e-cost').value.trim(),
+    advance_paid_bdt: document.getElementById('e-advance').value.trim(),
+    due_date: due,
+    notes: document.getElementById('e-notes').value.trim()
+  };
+  fetch('/api/sc/po/' + encodeURIComponent(POID), {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if(data.error){ err.innerHTML = esc(data.error); err.classList.add('show'); return; }
+    closeEditModal(); loadPo();
+  }).catch(function(e){ err.innerHTML = 'Failed: ' + esc(e.message); err.classList.add('show'); });
+}
+
+function confirmDelete(){
+  if(!confirm('Delete ' + POID + '? This permanently removes the PO and all timeline events.')) return;
+  fetch('/api/sc/po/' + encodeURIComponent(POID), {method: 'DELETE'})
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data.success){ window.location.href = '/supply-chain'; }
+      else { alert('Delete failed: ' + (data.error || 'Unknown error')); }
+    }).catch(function(e){ alert('Delete failed: ' + e.message); });
+}
+
 loadPo();
 </script>
+
+<!-- Edit PO modal -->
+<div class="modal-bg" id="edit-modal" onclick="editBgClick(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Edit Purchase Order</h3>
+      <button class="modal-close" onclick="closeEditModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-err" id="edit-err"></div>
+      <div class="field"><label>Product Name *</label><input id="e-product" type="text" placeholder="e.g. Winter Hoodie"></div>
+      <div class="field"><label>SKU (optional)</label><input id="e-sku" type="text" placeholder="e.g. HOOD-CHAR-M"></div>
+      <div class="field"><label>Supplier</label><input id="e-supplier" type="text" placeholder="Supplier name"></div>
+      <div class="row2">
+        <div class="field"><label>Quantity *</label><input id="e-qty" type="number" min="1" placeholder="0"></div>
+        <div class="field"><label>Unit Cost (BDT)</label><input id="e-cost" type="number" min="0" step="0.01" placeholder="0"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Advance Paid (BDT)</label><input id="e-advance" type="number" min="0" step="0.01" placeholder="0"></div>
+        <div class="field"><label>Due Date *</label><input id="e-due" type="date"></div>
+      </div>
+      <div class="field"><label>Notes</label><textarea id="e-notes" placeholder="Any notes for the team&hellip;"></textarea></div>
+      <button class="btn btn-primary" style="width:100%" onclick="saveEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>"""
