@@ -551,7 +551,8 @@ SC_DETAIL_HTML = """<!doctype html>
 .crumb a:hover{text-decoration:underline}
 .banner{background:#fff;border:0.5px solid var(--border);border-radius:12px;
         padding:1rem 1.25rem;display:flex;justify-content:space-between;gap:18px;margin-bottom:1.25rem}
-.banner .ttl{font-size:14px;font-weight:500;color:var(--text-primary)}
+.banner .ttl{font-size:11px;font-weight:400;color:var(--text-secondary)}
+.banner .pname{font-size:18px;font-weight:700;color:var(--text-primary);margin-top:3px;line-height:1.25}
 .banner .meta{color:var(--text-tertiary);font-size:11px;margin-top:6px;line-height:1.55}
 .banner .right{text-align:right;font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em}
 .banner .right .big{font-size:14px;color:var(--text-primary);font-weight:500;text-transform:none;letter-spacing:0}
@@ -581,7 +582,7 @@ SC_DETAIL_HTML = """<!doctype html>
 .tl-sdot.done{background:#1D9E75;border-color:#1D9E75}
 .tl-sdot.active{background:#7F77DD;border-color:#7F77DD;box-shadow:0 0 0 3px #EEEDFE}
 .tl-sdot.pending{border-style:dashed;opacity:.6}
-.tl-sname{font-size:12px;font-weight:600;color:var(--text-primary)}
+.tl-sname{font-size:12px;font-weight:700;color:var(--text-primary)}
 .tl-sname.done{color:#1D9E75}
 .tl-sname.active{color:#7F77DD}
 .tl-sname.pending{color:var(--text-tertiary);font-weight:400}
@@ -591,7 +592,7 @@ SC_DETAIL_HTML = """<!doctype html>
 .tl-body.b-finance{border-left-color:#BA7517}
 .tl-body.b-supplier{border-left-color:#378ADD}
 .tl-body.b-alert{border-left-color:var(--red)}
-.tl-title{color:var(--text-primary);font-weight:500;font-size:12px}
+.tl-title{color:var(--text-primary);font-weight:600;font-size:12px}
 .tl-note{color:var(--text-secondary);font-size:11px;margin-top:3px;line-height:1.55}
 .tl-amt{color:#BA7517;font-weight:500;font-size:12px;margin-top:3px}
 .tl-foot{display:flex;gap:10px;align-items:center;margin-top:5px}
@@ -743,8 +744,9 @@ function renderBanner(po){
   var arrive = po.actual_delivery || po.expected_delivery || po.due_date;
   arrive = arrive ? arrive.substring(0,10) : '&mdash;';
   var h = '<div>';
-  h += '<div class="ttl"><span class="mono" style="color:#7F77DD">' + esc(po.po_id) + '</span> &nbsp; ' + esc(po.product_name || '') + '</div>';
-  h += '<div class="meta">' + esc(po.supplier_name || 'No supplier') + ' &middot; ' + (po.quantity_ordered || 0) + ' pcs &middot; stage: ' + esc(po.current_stage) + '</div>';
+  h += '<div class="ttl"><span class="mono" style="color:#7F77DD">' + esc(po.po_id) + '</span></div>';
+  h += '<div class="pname">' + esc(po.product_name || '') + '</div>';
+  h += '<div class="meta">' + esc(po.supplier_name || 'No supplier') + ' &middot; ' + (po.quantity_ordered || 0) + ' pcs &middot; Due: ' + esc(arrive) + '</div>';
   h += '</div>';
   h += '<div class="right"><div>Expected arrival</div><div class="big">' + esc(arrive) + '</div></div>';
   document.getElementById('banner').innerHTML = h;
