@@ -460,11 +460,12 @@ COMMON_CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg-page);color:var(--text-primary);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
 header{background:var(--header-bg);border-bottom:1px solid var(--header-border);
-       padding:12px 24px;display:flex;align-items:center;justify-content:space-between;
+       padding:12px 24px;display:grid;grid-template-columns:1fr auto 1fr;
+       grid-template-areas:'brand nav actions';align-items:center;gap:8px;
        position:sticky;top:0;z-index:50}
-header h1,.brand{font-size:1rem;font-weight:700;color:#f0f6fc;text-decoration:none}
-.header-right{display:flex;align-items:center;gap:12px}
-.top-nav{display:flex;gap:2px}
+header h1,.brand{font-size:1rem;font-weight:700;color:#f0f6fc;text-decoration:none;grid-area:brand}
+.hdr-actions{grid-area:actions;display:flex;align-items:center;gap:12px;justify-content:flex-end}
+.top-nav{grid-area:nav;display:flex;gap:2px}
 .nav-link{color:#8b949e;font-size:.8rem;text-decoration:none;padding:5px 10px;
           border:1px solid transparent;border-radius:6px;transition:.2s;white-space:nowrap}
 .nav-link:hover{border-color:#30363d;color:#e6edf3}
@@ -481,9 +482,9 @@ header h1,.brand{font-size:1rem;font-weight:700;color:#f0f6fc;text-decoration:no
 .mob-nav a{color:#8b949e;font-size:.9rem;text-decoration:none;padding:8px 12px;border-radius:6px;display:block}
 .mob-nav a:hover,.mob-nav a.active{color:#e6edf3;background:#21262d}
 @media(max-width:700px){
+  header{grid-template-columns:1fr auto;grid-template-areas:'brand actions';position:relative}
   .top-nav{display:none!important}
   .ham{display:flex}
-  header{position:relative}
   .mob-nav.open{display:flex}
   .container{padding:14px 12px}
   main{padding:14px 12px!important}
@@ -595,14 +596,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <body>
 <header>
   <h1>&#9876;&#65039; Winterfell Operations</h1>
-  <div class="header-right">
-    <nav class="top-nav">
-      <a href="/" class="nav-link active">Operations</a>
-      <a href="/products" class="nav-link">Products</a>
-      <a href="/customers" class="nav-link">Customers</a>
-      <a href="/orders" class="nav-link">Orders</a>
-      <a href="/supply-chain" class="nav-link">Supply Chain</a>
-    </nav>
+  <nav class="top-nav">
+    <a href="/" class="nav-link active">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
     <button class="ham" onclick="document.getElementById('mnav1').classList.toggle('open')" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -889,14 +890,14 @@ td.rev{color:var(--text-primary);font-weight:500}
 <body>
 <header>
   <h1>&#9876;&#65039; Winterfell Operations</h1>
-  <div class="header-right">
-    <nav class="top-nav">
-      <a href="/" class="nav-link">Operations</a>
-      <a href="/products" class="nav-link active">Products</a>
-      <a href="/customers" class="nav-link">Customers</a>
-      <a href="/orders" class="nav-link">Orders</a>
-      <a href="/supply-chain" class="nav-link">Supply Chain</a>
-    </nav>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link active">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
     <button class="ham" onclick="document.getElementById('mnav2').classList.toggle('open')" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -1308,14 +1309,14 @@ td.rev{color:var(--text-primary);font-weight:500}
 <body>
 <header>
   <h1>&#9876;&#65039; Winterfell Operations</h1>
-  <div class="header-right">
-    <nav class="top-nav">
-      <a href="/" class="nav-link">Operations</a>
-      <a href="/products" class="nav-link">Products</a>
-      <a href="/customers" class="nav-link active">Customers</a>
-      <a href="/orders" class="nav-link">Orders</a>
-      <a href="/supply-chain" class="nav-link">Supply Chain</a>
-    </nav>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link active">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
     <button class="ham" onclick="document.getElementById('mnav3').classList.toggle('open')" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -1711,14 +1712,14 @@ tbody td.r{text-align:right;white-space:nowrap}
 <body>
 <header>
   <h1>&#9876;&#65039; Winterfell Operations</h1>
-  <div class="header-right">
-    <nav class="top-nav">
-      <a href="/" class="nav-link">Operations</a>
-      <a href="/products" class="nav-link">Products</a>
-      <a href="/customers" class="nav-link">Customers</a>
-      <a href="/orders" class="nav-link active">Orders</a>
-      <a href="/supply-chain" class="nav-link">Supply Chain</a>
-    </nav>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link active">Orders</a>
+    <a href="/supply-chain" class="nav-link">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
     <button class="ham" onclick="document.getElementById(\'mnav4\').classList.toggle(\'open\')" aria-label="Menu">
       <span></span><span></span><span></span>

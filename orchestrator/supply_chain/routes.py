@@ -119,10 +119,11 @@ body{background:var(--bg-page);color:var(--text-primary);
 
 /* ── header / nav (KEEP DARK to match rest of app) ─────────────────────── */
 header{background:var(--header-bg);border-bottom:1px solid var(--header-border);
-       padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
-header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
-.header-right{display:flex;align-items:center;gap:16px}
-.top-nav{display:flex;gap:4px}
+       padding:14px 24px;display:grid;grid-template-columns:1fr auto 1fr;
+       grid-template-areas:'brand nav actions';align-items:center;gap:8px}
+header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
+.hdr-actions{grid-area:actions;display:flex;align-items:center;gap:12px;justify-content:flex-end}
+.top-nav{grid-area:nav;display:flex;gap:4px}
 .nav-link{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 12px;
           border:1px solid transparent;border-radius:6px;transition:.2s}
 .nav-link:hover{border-color:var(--header-border);color:#e6edf3}
@@ -138,9 +139,9 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .mob-nav a{color:#8b949e;font-size:.9rem;text-decoration:none;padding:8px 12px;border-radius:6px;display:block}
 .mob-nav a:hover,.mob-nav a.active{color:#e6edf3;background:#21262d}
 @media(max-width:700px){
+  header{grid-template-columns:1fr auto;grid-template-areas:'brand actions';position:relative}
   .top-nav{display:none!important}
   .ham{display:flex}
-  header{position:relative}
   .mob-nav.open{display:flex}
   .container{padding:14px 12px}
   .tbl-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -194,13 +195,20 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .po-due .d{color:var(--text-primary);font-weight:500;font-size:13px}
 
 /* stage track */
-.stages{display:flex;align-items:center;margin:10px 0 2px 0;background:#F9FAFB;border-radius:8px;padding:.5rem .75rem}
-.stage-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid #CBD5E0;background:#fff;flex:0 0 auto}
+.stages{margin:10px 0 4px 0;background:#F9FAFB;border-radius:8px;padding:.5rem .75rem}
+.st-row{display:flex;align-items:center}
+.stage-dot{width:16px;height:16px;border-radius:50%;border:1.5px solid #CBD5E0;background:#fff;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
 .stage-dot.done{background:#1D9E75;border-color:#1D9E75}
 .stage-dot.active{background:#7F77DD;border-color:#7F77DD;box-shadow:0 0 0 3px #EEEDFE}
 .stage-line{height:3px;flex:1;background:var(--track);border-radius:2px}
 .stage-line.done{background:#1D9E75}
 .stage-line.active{background:linear-gradient(90deg,#1D9E75,#7F77DD)}
+.st-lbls{display:flex;margin-top:7px}
+.st-lbl{flex:1;text-align:center;font-size:9px;color:var(--text-tertiary)}
+.st-lbl:first-child{text-align:left}
+.st-lbl:last-child{text-align:right}
+.st-lbl.done{color:var(--teal)}
+.st-lbl.active{color:var(--purple);font-weight:600}
 
 .po-detail{display:none;padding:1rem 1.25rem;border-top:0.5px solid var(--border);background:#fff}
 .po-detail.open{display:block}
@@ -262,14 +270,14 @@ SC_LIST_HTML = """<!doctype html>
 <body>
 <header>
   <h1>&#9876;&#65039; Winterfell Operations</h1>
-  <div class="header-right">
-    <nav class="top-nav">
-      <a href="/" class="nav-link">Operations</a>
-      <a href="/products" class="nav-link">Products</a>
-      <a href="/customers" class="nav-link">Customers</a>
-      <a href="/orders" class="nav-link">Orders</a>
-      <a href="/supply-chain" class="nav-link active">Supply Chain</a>
-    </nav>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link active">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
     <button class="ham" onclick="document.getElementById('mnav-sc').classList.toggle('open')" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -392,12 +400,13 @@ function dueText(po){
 }
 function stagesHtml(currentStage){
   var idx = STAGES.indexOf(currentStage);
-  var html = '<div class="stages">';
+  var html = '<div class="stages"><div class="st-row">';
   for(var i=0; i<STAGES.length; i++){
     var cls = 'stage-dot';
-    if(i < idx) cls += ' done';
-    else if(i === idx) cls += ' active';
-    html += '<span class="' + cls + '" title="' + esc(STAGES[i]) + '"></span>';
+    var inner = '';
+    if(i < idx){ cls += ' done'; inner = '<span style="color:#fff;font-size:9px;line-height:1;font-weight:700">&#10003;</span>'; }
+    else if(i === idx){ cls += ' active'; inner = '<span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span>'; }
+    html += '<span class="' + cls + '" title="' + esc(STAGES[i]) + '">' + inner + '</span>';
     if(i < STAGES.length - 1){
       var lcls = 'stage-line';
       if(i < idx) lcls += ' done';
@@ -405,7 +414,14 @@ function stagesHtml(currentStage){
       html += '<span class="' + lcls + '"></span>';
     }
   }
-  html += '</div>';
+  html += '</div><div class="st-lbls">';
+  for(var j=0; j<STAGES.length; j++){
+    var lc = 'st-lbl';
+    if(j < idx) lc += ' done';
+    else if(j === idx) lc += ' active';
+    html += '<span class="' + lc + '">' + esc(STAGES[j]) + '</span>';
+  }
+  html += '</div></div>';
   return html;
 }
 
@@ -579,8 +595,8 @@ SC_DETAIL_HTML = """<!doctype html>
 .crumb a:hover{text-decoration:underline}
 .banner{background:#fff;border:0.5px solid var(--border);border-radius:12px;
         padding:1rem 1.25rem;display:flex;justify-content:space-between;gap:18px;margin-bottom:1.25rem}
-.banner .ttl{font-size:13px;font-weight:600;color:var(--text-secondary)}
-.banner .pname{font-size:18px;font-weight:700;color:var(--text-primary);margin-top:3px;line-height:1.25}
+.banner .ttl{font-size:15px;font-weight:600;color:var(--text-secondary)}
+.banner .pname{font-size:22px;font-weight:700;color:var(--text-primary);margin-top:3px;line-height:1.25}
 .banner .meta{color:var(--text-tertiary);font-size:11px;margin-top:6px;line-height:1.55}
 .banner .right{text-align:right;font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em}
 .banner .right .big{font-size:14px;color:var(--text-primary);font-weight:500;text-transform:none;letter-spacing:0}
@@ -645,14 +661,14 @@ SC_DETAIL_HTML = """<!doctype html>
 <body>
 <header>
   <h1>&#9876;&#65039; Winterfell Operations</h1>
-  <div class="header-right">
-    <nav class="top-nav">
-      <a href="/" class="nav-link">Operations</a>
-      <a href="/products" class="nav-link">Products</a>
-      <a href="/customers" class="nav-link">Customers</a>
-      <a href="/orders" class="nav-link">Orders</a>
-      <a href="/supply-chain" class="nav-link active">Supply Chain</a>
-    </nav>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link active">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
     <button class="ham" onclick="document.getElementById('mnav-sc').classList.toggle('open')" aria-label="Menu">
       <span></span><span></span><span></span>
