@@ -551,7 +551,7 @@ SC_DETAIL_HTML = """<!doctype html>
 .crumb a:hover{text-decoration:underline}
 .banner{background:#fff;border:0.5px solid var(--border);border-radius:12px;
         padding:1rem 1.25rem;display:flex;justify-content:space-between;gap:18px;margin-bottom:1.25rem}
-.banner .ttl{font-size:11px;font-weight:400;color:var(--text-secondary)}
+.banner .ttl{font-size:13px;font-weight:600;color:var(--text-secondary)}
 .banner .pname{font-size:18px;font-weight:700;color:var(--text-primary);margin-top:3px;line-height:1.25}
 .banner .meta{color:var(--text-tertiary);font-size:11px;margin-top:6px;line-height:1.55}
 .banner .right{text-align:right;font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em}
@@ -592,7 +592,7 @@ SC_DETAIL_HTML = """<!doctype html>
 .tl-body.b-finance{border-left-color:#BA7517}
 .tl-body.b-supplier{border-left-color:#378ADD}
 .tl-body.b-alert{border-left-color:var(--red)}
-.tl-title{color:var(--text-primary);font-weight:600;font-size:12px}
+.tl-title{color:var(--text-primary);font-weight:700;font-size:12px}
 .tl-note{color:var(--text-secondary);font-size:11px;margin-top:3px;line-height:1.55}
 .tl-amt{color:#BA7517;font-weight:500;font-size:12px;margin-top:3px}
 .tl-foot{display:flex;gap:10px;align-items:center;margin-top:5px}
