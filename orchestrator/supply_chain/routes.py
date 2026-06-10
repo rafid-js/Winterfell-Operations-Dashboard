@@ -160,7 +160,7 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .po-card.status-delayed{border-left-color:var(--red)}
 .po-card.status-atrisk{border-left-color:var(--amber)}
 .po-card.status-active{border-left-color:var(--teal)}
-.po-summary{padding:.85rem 1.25rem;cursor:pointer;display:flex;align-items:center;gap:18px}
+.po-summary{padding:.85rem 1.25rem;cursor:pointer;display:grid;grid-template-columns:1fr auto;align-items:center;gap:18px}
 .po-summary:hover{background:var(--bg-inner)}
 .po-main{flex:1;min-width:0}
 .po-line1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -177,7 +177,7 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .po-due .d{color:var(--text-primary);font-weight:500;font-size:13px}
 
 /* stage track */
-.stages{display:flex;align-items:center;margin:8px 0 2px 0}
+.stages{display:flex;align-items:center;margin:10px 0 2px 0;background:#F9FAFB;border-radius:8px;padding:.5rem .75rem}
 .stage-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid #CBD5E0;background:#fff;flex:0 0 auto}
 .stage-dot.done{background:#1D9E75;border-color:#1D9E75}
 .stage-dot.active{background:#7F77DD;border-color:#7F77DD;box-shadow:0 0 0 3px #EEEDFE}
