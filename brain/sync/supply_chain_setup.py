@@ -10,10 +10,13 @@ Safe to re-run — uses IF NOT EXISTS / CREATE OR REPLACE / ON CONFLICT througho
 Run once from brain/:
   python -m sync.supply_chain_setup
 """
+import os
 import sys
 from sqlalchemy import text
 
-sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
+# brain/ is the parent of this file's sync/ directory — add it so `db` imports
+# work regardless of the current working directory or platform.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db import get_connection
 
 
