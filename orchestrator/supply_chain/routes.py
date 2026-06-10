@@ -1249,7 +1249,7 @@ function renderPickerResults(){
   var h = '';
   for(var i=0; i<pmxResults.length; i++){
     var p = pmxResults[i];
-    var nm = p.product_name + (p.color ? ' &middot; ' + p.color : '');
+    var nm = p.base_name;
     var meta = p.variant_count + ' size' + (p.variant_count>1?'s':'')
              + ' &middot; ' + (p.total_stock||0) + ' in stock';
     h += '<div class="picker-item' + (i===pmxHi?' hi':'') + '" '
@@ -1277,8 +1277,7 @@ function pickProduct(i){
   var matrixBox = document.getElementById('size-matrix');
   matrixBox.style.display = 'block';
   matrixBox.innerHTML = '<div style="color:#8b949e;font-size:12px;padding:8px 0">Loading Brain recommendation&hellip;</div>';
-  var url = '/api/sc/product-matrix?product_name=' + encodeURIComponent(p.product_name)
-          + (p.color ? '&color=' + encodeURIComponent(p.color) : '');
+  var url = '/api/sc/product-matrix?product_name=' + encodeURIComponent(p.base_name);
   fetch(url).then(function(r){ return r.json(); }).then(function(data){
     if(data.error){ matrixBox.innerHTML = '<div class="picker-empty">' + esc(data.error) + '</div>'; return; }
     initPMX(data);

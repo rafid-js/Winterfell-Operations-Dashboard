@@ -9,6 +9,7 @@ Queries use parameterised text() — never string-format user input into SQL.
 """
 import json
 import os
+import re
 import sys
 from datetime import date, datetime
 from decimal import Decimal
@@ -39,10 +40,31 @@ SIZE_ORDER = {
 # Default manufacturing lead time (days) used by the Brain quantity recommender.
 DEFAULT_LEAD_TIME_DAYS = 30
 
+# Same regex used by the Products module to strip size suffixes and group SKUs
+# into a single "product" (e.g. "Classic Tee - M" → "Classic Tee").
+_SIZE_RE_SQL = (
+    r'\s*-\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[2-5][0-9])'
+    r'(\s*\([^)]*\))?\s*$'
+)
+_SIZE_RE_PY = re.compile(_SIZE_RE_SQL, re.IGNORECASE)
+
 
 def _size_sort_key(size):
     s = (size or '').strip().upper()
-    return (SIZE_ORDER.get(s, 50), s)
+    # Numeric waist/length sizes (28, 30, 32 …) sort numerically after letter sizes.
+    if s.isdigit():
+        return (100, int(s), s)
+    return (SIZE_ORDER.get(s, 50), 0, s)
+
+
+def _extract_size_label(product_name, raw_size):
+    """Return the size label for one SKU variant."""
+    if raw_size and raw_size.strip():
+        return raw_size.strip()
+    m = _SIZE_RE_PY.search(product_name or '')
+    if m:
+        return m.group(1)
+    return (product_name or '—')
 
 
 
@@ -804,28 +826,32 @@ def unlink_so_from_po(po_id, so_number):
 
 def search_products(query, limit=20):
     """
-    Search active products for the New PO picker, grouped by (product_name, color).
+    Search active products for the New PO picker.
 
-    Each group is one orderable 'product' whose individual sizes are separate
-    SKU rows. Returns lightweight rows for the dropdown.
+    Groups all size variants into one 'product' by stripping the size suffix
+    from product_name using the same regex the Products module uses.
+    e.g. "Dusty Olive … - 30", "Dusty Olive … - 32" → one row "Dusty Olive …"
     """
     q = (query or '').strip()
     like = '%' + q + '%'
     with get_connection() as conn:
         rows = conn.execute(text("""
-            SELECT product_name,
-                   COALESCE(color, '') AS color,
-                   COUNT(*)            AS variant_count,
+            SELECT base_name,
+                   COUNT(*)                        AS variant_count,
                    COALESCE(SUM(current_stock), 0) AS total_stock,
-                   AVG(cost_price)     AS avg_cost
-            FROM skus
-            WHERE is_active = TRUE
-              AND product_name IS NOT NULL
-              AND (product_name ILIKE :like OR sku ILIKE :like OR color ILIKE :like)
-            GROUP BY product_name, COALESCE(color, '')
-            ORDER BY product_name ASC, color ASC
+                   AVG(cost_price)                 AS avg_cost
+            FROM (
+                SELECT TRIM(regexp_replace(product_name, :size_re, '', 'i')) AS base_name,
+                       current_stock, cost_price
+                FROM skus
+                WHERE is_active = TRUE
+                  AND product_name IS NOT NULL
+                  AND (product_name ILIKE :like OR sku ILIKE :like)
+            ) t
+            GROUP BY base_name
+            ORDER BY base_name ASC
             LIMIT :limit
-        """), {'like': like, 'limit': int(limit)}).fetchall()
+        """), {'like': like, 'size_re': _SIZE_RE_SQL, 'limit': int(limit)}).fetchall()
     return _rows_to_list(rows)
 
 
@@ -833,26 +859,23 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
     """
     Build the per-size Brain quantity recommendation for a product.
 
-    Returns a dict matching the front-end size-matrix contract:
-        sku_base, product_name, color, lead_time_days, unit_cost_bdt,
-        sizes[], auto_qty[], current_stock[], sales_30d[], waiting_orders[],
-        total_auto, total_30d_sales
+    Finds all active SKUs whose base_name (product_name with size suffix stripped)
+    matches `product_name`, extracts size labels from product_name, then computes:
 
-    Recommended total (Brain):
         recommended_total = ceil(
             (total_30d_sales / 30 * lead_time_days)
             - total_current_stock
-            + (total_30d_sales / 30 * 5)          # 5-day safety buffer
+            + (total_30d_sales / 30 * 5)        # 5-day safety buffer
         )
-    Per-size split (proportional to 30d sales, ceil):
-        size_qty = ceil(size_30d_sales / total_30d_sales * recommended_total)
+
+    30-day sales includes: Delivered, On Hold, In Transit, Pending — i.e. all
+    statuses EXCEPT Cancelled / Returned / Refunded / Rejected.
     """
     import math
 
     pname = (product_name or '').strip()
     if not pname:
         raise ValueError('product_name is required')
-    color = (color or '').strip() or None
     try:
         lead = int(lead_time_days) if lead_time_days not in (None, '') else DEFAULT_LEAD_TIME_DAYS
     except (TypeError, ValueError):
@@ -862,41 +885,52 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
 
     with get_connection() as conn:
         sku_rows = conn.execute(text("""
-            SELECT sku, COALESCE(size, '') AS size,
+            SELECT sku, product_name,
+                   COALESCE(size, '') AS raw_size,
                    COALESCE(current_stock, 0) AS current_stock,
                    cost_price
             FROM skus
-            WHERE product_name = :pname
-              AND is_active = TRUE
-              AND (:color IS NULL OR COALESCE(color, '') = :color)
-        """), {'pname': pname, 'color': color}).fetchall()
+            WHERE is_active = TRUE
+              AND TRIM(regexp_replace(product_name, :size_re, '', 'i')) = :pname
+        """), {'pname': pname, 'size_re': _SIZE_RE_SQL}).fetchall()
 
         if not sku_rows:
-            raise ValueError('No active SKUs found for that product')
+            raise ValueError('No active SKUs found for "' + pname + '"')
 
         variants = _rows_to_list(sku_rows)
-        variants.sort(key=lambda v: _size_sort_key(v.get('size')))
+        for v in variants:
+            v['size_label'] = _extract_size_label(v.get('product_name', ''), v.get('raw_size', ''))
+        variants.sort(key=lambda v: _size_sort_key(v.get('size_label')))
         skus = [v['sku'] for v in variants]
 
-        # 30-day sales per SKU
+        # 30-day sales per SKU — include Delivered + On Hold + In Transit + Pending.
+        # Exclude only definitive negative outcomes.
         sales_rows = conn.execute(text("""
             SELECT oi.sku, COALESCE(SUM(oi.quantity), 0) AS qty
             FROM order_items oi
             JOIN orders o ON o.so_number = oi.so_number
             WHERE oi.sku = ANY(:skus)
+              AND o.order_date IS NOT NULL
               AND o.order_date >= NOW() - INTERVAL '30 days'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%cancel%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%return%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%refund%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%reject%'
             GROUP BY oi.sku
         """), {'skus': skus}).fetchall()
         sales_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in sales_rows}
 
-        # Outstanding (waiting) orders per SKU — not yet delivered/cancelled
+        # Waiting orders — active but not yet fulfilled or cancelled.
         wait_rows = conn.execute(text("""
             SELECT oi.sku, COALESCE(SUM(oi.quantity), 0) AS qty
             FROM order_items oi
             JOIN orders o ON o.so_number = oi.so_number
             WHERE oi.sku = ANY(:skus)
-              AND COALESCE(o.nuport_status, '') NOT IN
-                  ('Delivered', 'Cancelled', 'Returned', 'Refunded')
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%deliver%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%complet%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%cancel%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%return%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%refund%'
             GROUP BY oi.sku
         """), {'skus': skus}).fetchall()
         wait_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in wait_rows}
@@ -904,7 +938,7 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
     sizes, stock, sales, waiting = [], [], [], []
     cost_vals = []
     for v in variants:
-        sizes.append(v.get('size') or '—')
+        sizes.append(v.get('size_label') or '—')
         stock.append(int(v.get('current_stock') or 0))
         sales.append(sales_map.get(v['sku'], 0))
         waiting.append(wait_map.get(v['sku'], 0))
@@ -923,7 +957,6 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
         for s in sales:
             auto_qty.append(int(math.ceil(s / total_sales * recommended_total)))
     else:
-        # No sales signal — distribute evenly so the matrix is still usable.
         n = len(sizes)
         base = recommended_total // n if n else 0
         auto_qty = [base for _ in sizes]
@@ -936,7 +969,6 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
     return {
         'sku_base': sku_base,
         'product_name': pname,
-        'color': color or '',
         'lead_time_days': lead,
         'unit_cost_bdt': unit_cost,
         'sizes': sizes,
