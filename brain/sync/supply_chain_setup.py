@@ -140,6 +140,11 @@ ON CONFLICT (script_name) DO NOTHING;
 # Phase 2 incremental migrations — safe to re-run.
 MIGRATIONS_SQL = [
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS size_breakdown JSONB;",
+    # Multi-product POs: array of line items
+    #   [{product_name, sku, unit_cost_bdt, quantity, total_cost_bdt, size_breakdown}]
+    # The scalar columns (product_name, quantity_ordered, total_cost_bdt …) stay
+    # populated with roll-up summaries so existing views keep working.
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_products JSONB;",
 ]
 
 

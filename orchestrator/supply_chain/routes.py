@@ -913,6 +913,23 @@ SC_LIST_HTML = """<!doctype html>
 .dist-banner{border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;line-height:1.5}
 .dist-banner.amber{background:#FAEEDA;border:0.5px solid #EF9F27;color:#633806}
 .dist-banner.warn{background:#FCEBEB;border:0.5px solid #F09595;color:#791F1F}
+
+/* multi-product cart */
+.po-lines-head{font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;
+  letter-spacing:.06em;margin-bottom:8px}
+.po-line{background:var(--bg-inner);border:0.5px solid var(--border);border-radius:8px;
+  padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.po-line .pl-name{font-size:13px;font-weight:600;color:var(--text-primary)}
+.po-line .pl-meta{font-size:11px;color:var(--text-tertiary);margin-top:3px;line-height:1.5}
+.po-line .pl-cost{font-size:13px;font-weight:600;color:var(--text-primary);white-space:nowrap}
+.po-line .pl-rm{font-size:11px;color:#791F1F;cursor:pointer;background:none;border:none;margin-top:4px;padding:0}
+.po-lines-total{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 12px;margin:4px 0 6px 0;font-size:12px;color:var(--text-secondary)}
+.po-lines-total b{font-size:15px;color:var(--text-primary)}
+.po-divider{height:1px;background:var(--border);margin:18px 0 16px 0}
+.add-line-btn{width:100%;background:#E1F5EE;color:#085041;border:0.5px solid #5DCAA5;
+  border-radius:8px;padding:10px;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:6px}
+.add-line-btn:hover{filter:brightness(.98)}
 </style>
 </head>
 <body>
@@ -979,9 +996,12 @@ SC_LIST_HTML = """<!doctype html>
     <div class="modal-body">
       <div class="form-err" id="form-err"></div>
 
+      <!-- Added products (multi-product cart) -->
+      <div id="po-lines"></div>
+
       <!-- Product picker -->
       <div class="field" id="picker-field" style="position:relative">
-        <label>Product *</label>
+        <label id="picker-label">Product *</label>
         <input id="f-product-search" type="text" autocomplete="off"
                placeholder="Search products by name, colour or SKU&hellip;"
                oninput="onProductSearch()" onfocus="onProductSearch()"
@@ -1001,19 +1021,27 @@ SC_LIST_HTML = """<!doctype html>
       <!-- Redistribution / validation banner -->
       <div id="dist-banner" class="dist-banner amber" style="display:none"></div>
 
+      <!-- Per-product unit cost (shown once a product is selected) -->
+      <div class="field" id="cost-field" style="display:none">
+        <label>Unit Cost (BDT) — this product</label>
+        <input id="f-cost" type="number" min="0" step="0.01" placeholder="0" oninput="onCostInput()">
+      </div>
+
+      <!-- Add the configured product to the PO -->
+      <button class="add-line-btn" id="add-line-btn" style="display:none" onclick="addLineToPO()">
+        + Add this product to the PO
+      </button>
+
+      <div class="po-divider"></div>
+
+      <!-- PO-level fields shared across all products -->
       <div class="field">
         <label>Supplier</label>
         <input id="f-supplier" type="text" placeholder="Existing name links, new name creates">
       </div>
-      <div class="row2">
-        <div class="field">
-          <label>Unit Cost (BDT)</label>
-          <input id="f-cost" type="number" min="0" step="0.01" placeholder="0" oninput="onCostInput()">
-        </div>
-        <div class="field">
-          <label>Due Date *</label>
-          <input id="f-due" type="date">
-        </div>
+      <div class="field">
+        <label>Due Date *</label>
+        <input id="f-due" type="date">
       </div>
       <div class="field">
         <label>Notes</label>
@@ -1168,6 +1196,25 @@ function detailHtml(po, timeline){
   h += '<div class="cost-box"><div class="l">Advance paid</div><div class="v">' + fmtBDT(po.advance_paid_bdt) + '</div></div>';
   h += '<div class="cost-box"><div class="l">Balance due</div><div class="v">' + fmtBDT(po.balance_due_bdt) + '</div></div>';
   h += '</div>';
+
+  // Per-product breakdown (multi-product POs).
+  var prods = po.po_products;
+  if(typeof prods === 'string'){ try{ prods = JSON.parse(prods); }catch(e){ prods = null; } }
+  if(prods && prods.length > 1){
+    h += '<div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px">Products (' + prods.length + ')</div>';
+    for(var pi=0; pi<prods.length; pi++){
+      var pr = prods[pi];
+      var sizes = (pr.size_breakdown||[]).filter(function(s){return (s.qty||0)>0;})
+                    .map(function(s){return esc(s.size)+':'+s.qty;}).join('  ');
+      h += '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:0.5px solid var(--border)">';
+      h += '<div style="min-width:0"><div style="font-size:13px;font-weight:500;color:var(--text-primary)">' + esc(pr.product_name) + '</div>';
+      h += '<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">' + (pr.quantity||0) + ' pcs &middot; ' + fmtBDT(pr.unit_cost_bdt) + '/pc' + (sizes ? ' &middot; ' + sizes : '') + '</div></div>';
+      h += '<div style="font-size:13px;font-weight:600;white-space:nowrap">' + fmtBDT((pr.unit_cost_bdt||0)*(pr.quantity||0)) + '</div>';
+      h += '</div>';
+    }
+    h += '<div style="margin-bottom:14px"></div>';
+  }
+
   h += '<div class="mini-tl">';
   var evs = timeline || [];
   var recent = evs.slice(-4);
@@ -1211,26 +1258,95 @@ function modalBgClick(e){ if(e.target === document.getElementById('modal')){ clo
    }
 */
 var PMX = null;
+var PO_LINES = [];          // products added to this PO
 var pmxSearchTimer = null;
 var pmxResults = [];
 var pmxHi = -1;
 
 function resetModal(){
+  PO_LINES = [];
+  document.getElementById('f-supplier').value = '';
+  document.getElementById('f-due').value = '';
+  document.getElementById('f-notes').value = '';
+  clearProductArea();
+  renderLines();
+}
+
+/* Reset only the product-config area (picker + matrix + per-product cost),
+   leaving PO_LINES and the PO-level fields untouched. */
+function clearProductArea(){
   PMX = null; pmxResults = []; pmxHi = -1;
   document.getElementById('f-product-search').value = '';
   document.getElementById('f-product').value = '';
   document.getElementById('f-color').value = '';
   document.getElementById('f-sku').value = '';
-  document.getElementById('f-supplier').value = '';
   document.getElementById('f-cost').value = '';
-  document.getElementById('f-due').value = '';
-  document.getElementById('f-notes').value = '';
   document.getElementById('product-results').classList.remove('open');
   document.getElementById('selected-product').style.display = 'none';
   document.getElementById('size-matrix').style.display = 'none';
   document.getElementById('size-matrix').innerHTML = '';
   document.getElementById('dist-banner').style.display = 'none';
+  document.getElementById('cost-field').style.display = 'none';
+  document.getElementById('add-line-btn').style.display = 'none';
   document.getElementById('picker-field').style.display = '';
+  document.getElementById('picker-label').textContent =
+    PO_LINES.length ? 'Add another product' : 'Product *';
+}
+
+/* ── multi-product cart ──────────────────────────────────────────────────── */
+function addLineToPO(){
+  var err = document.getElementById('form-err');
+  err.classList.remove('show');
+  if(!PMX){ return; }
+  if(!PMX.total_current || PMX.total_current <= 0){
+    err.innerHTML = 'Total quantity must be greater than zero before adding.';
+    err.classList.add('show'); return;
+  }
+  var costEl = document.getElementById('f-cost');
+  var unitCost = Number(costEl && costEl.value) || PMX.unit_cost || 0;
+  var breakdown = [];
+  for(var j=0;j<PMX.sizes.length;j++){ breakdown.push({size: PMX.sizes[j], qty: PMX.current_qty[j]}); }
+  PO_LINES.push({
+    product_name: PMX.product_name,
+    sku: PMX.sku_base,
+    unit_cost_bdt: unitCost,
+    quantity: PMX.total_current,
+    size_breakdown: breakdown
+  });
+  clearProductArea();
+  renderLines();
+}
+
+function removeLine(i){
+  PO_LINES.splice(i, 1);
+  renderLines();
+  document.getElementById('picker-label').textContent =
+    PO_LINES.length ? 'Add another product' : 'Product *';
+}
+
+function lineCost(l){ return (Number(l.unit_cost_bdt)||0) * (Number(l.quantity)||0); }
+
+function renderLines(){
+  var wrap = document.getElementById('po-lines');
+  if(!PO_LINES.length){ wrap.innerHTML = ''; return; }
+  var h = '<div class="po-lines-head">Products in this PO (' + PO_LINES.length + ')</div>';
+  var grand = 0, grandQty = 0;
+  for(var i=0;i<PO_LINES.length;i++){
+    var l = PO_LINES[i];
+    var c = lineCost(l); grand += c; grandQty += (Number(l.quantity)||0);
+    var sizes = (l.size_breakdown||[]).filter(function(s){return (s.qty||0)>0;})
+                  .map(function(s){return esc(s.size)+':'+s.qty;}).join('  ');
+    h += '<div class="po-line"><div style="min-width:0">'
+       + '<div class="pl-name">' + esc(l.product_name) + '</div>'
+       + '<div class="pl-meta">' + (l.quantity||0) + ' pcs &middot; ' + fmtBDT(l.unit_cost_bdt) + '/pc'
+       + (sizes ? '<br>' + sizes : '') + '</div>'
+       + '<button class="pl-rm" onclick="removeLine(' + i + ')">Remove</button>'
+       + '</div>'
+       + '<div class="pl-cost">' + fmtBDT(c) + '</div></div>';
+  }
+  h += '<div class="po-lines-total"><span>' + grandQty + ' pcs total</span>'
+     + '<b>' + fmtBDT(grand) + '</b></div>';
+  wrap.innerHTML = h;
 }
 
 /* ── product search picker ──────────────────────────────────────────────── */
@@ -1332,19 +1448,14 @@ function initPMX(d){
     + 'lead ' + PMX.lead_time_days + 'd + ' + PMX.buffer_days + 'd buffer)</div></div>'
     + '<button class="sp-change" onclick="changeProduct()">Change</button>';
   document.getElementById('picker-field').style.display = 'none';
+  document.getElementById('cost-field').style.display = '';
+  document.getElementById('add-line-btn').style.display = '';
 
   renderMatrix();
 }
 
 function changeProduct(){
-  PMX = null;
-  document.getElementById('selected-product').style.display = 'none';
-  document.getElementById('size-matrix').style.display = 'none';
-  document.getElementById('size-matrix').innerHTML = '';
-  document.getElementById('dist-banner').style.display = 'none';
-  document.getElementById('picker-field').style.display = '';
-  document.getElementById('f-product').value = '';
-  document.getElementById('f-product-search').value = '';
+  clearProductArea();
   document.getElementById('f-product-search').focus();
 }
 
@@ -1585,23 +1696,17 @@ function submitPo(){
   err.classList.remove('show');
   var due = document.getElementById('f-due').value.trim();
 
-  if(!PMX){ err.innerHTML = 'Select a product first.'; err.classList.add('show'); return; }
-  if(!PMX.total_current || PMX.total_current <= 0){ err.innerHTML = 'Total quantity must be greater than zero.'; err.classList.add('show'); return; }
-  for(var i=0;i<PMX.current_qty.length;i++){ if(PMX.current_qty[i] < 0){ err.innerHTML = 'Sizes cannot be negative.'; err.classList.add('show'); return; } }
+  // Auto-add a product that's been configured but not yet added to the cart.
+  if(PMX && PMX.total_current > 0){ addLineToPO(); }
+
+  if(!PO_LINES.length){ err.innerHTML = 'Add at least one product to the PO.'; err.classList.add('show'); return; }
   if(!due){ err.innerHTML = 'Due date is required.'; err.classList.add('show'); return; }
 
-  var breakdown = [];
-  for(var j=0;j<PMX.sizes.length;j++){ breakdown.push({size: PMX.sizes[j], qty: PMX.current_qty[j]}); }
-
   var body = {
-    product_name: PMX.product_name,
-    sku: document.getElementById('f-sku').value.trim(),
+    products: PO_LINES,
     supplier_name: document.getElementById('f-supplier').value.trim(),
-    quantity_ordered: PMX.total_current,
-    unit_cost_bdt: document.getElementById('f-cost').value.trim(),
     due_date: due,
-    notes: document.getElementById('f-notes').value.trim(),
-    size_breakdown: breakdown
+    notes: document.getElementById('f-notes').value.trim()
   };
   fetch('/api/sc/pos', {
     method: 'POST',
