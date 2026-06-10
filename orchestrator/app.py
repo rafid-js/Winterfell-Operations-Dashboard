@@ -218,7 +218,7 @@ _PRODUCT_STATUS_FILTERS = {
 
 _ORDER_TAB_FILTERS = {
     'all':           "1=1",
-    'pending':       "o.nuport_status ILIKE 'pending'",
+    'pending':       "UPPER(o.nuport_status) IN ('PENDING', 'REQUESTED')",
     'on_hold':       "o.nuport_status ILIKE 'on%hold'",
     'approved':      "o.nuport_status ILIKE 'approv%'",
     'processing':    "o.nuport_status ILIKE 'process%'",
@@ -1763,7 +1763,7 @@ function fmt(n){return Math.round(Number(n||0)).toLocaleString();}
 function statusClass(s){
   if(!s)return 'st-other';
   var u=s.toUpperCase();
-  if(u==='PENDING')return 'st-pending';
+  if(u==='PENDING'||u==='REQUESTED')return 'st-pending';
   if(u.indexOf('ON')>=0&&u.indexOf('HOLD')>=0)return 'st-on-hold';
   if(u.indexOf('APPROV')>=0)return 'st-approved';
   if(u.indexOf('PROCESS')>=0)return 'st-processing';
@@ -1905,7 +1905,7 @@ def api_orders_counts():
     for s, cnt in rows:
         counts['all'] += cnt
         s2 = s.replace(' ', '_').replace('-', '_')
-        if   s2 == 'PENDING':              counts['pending']       += cnt
+        if   s2 in ('PENDING', 'REQUESTED'): counts['pending']       += cnt
         elif s2 == 'ON_HOLD':              counts['on_hold']       += cnt
         elif s2.startswith('APPROV'):      counts['approved']      += cnt
         elif s2.startswith('PROCESS'):     counts['processing']    += cnt

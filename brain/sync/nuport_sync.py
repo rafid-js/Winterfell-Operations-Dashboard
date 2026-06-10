@@ -247,6 +247,52 @@ UPSERT_ORDER = text("""
         updated_at       = NOW()
 """)
 
+UPSERT_ORDER_ITEM = text("""
+    INSERT INTO order_items (
+        so_number, sku, product_name, size, color,
+        quantity, unit_price, total_price, item_discount, price_after_discount
+    ) VALUES (
+        :so_number, :sku, :product_name, :size, :color,
+        :quantity, :unit_price, :total_price, :item_discount, :price_after_discount
+    )
+    ON CONFLICT (so_number, sku, COALESCE(size,''), COALESCE(color,'')) DO UPDATE SET
+        quantity             = EXCLUDED.quantity,
+        unit_price           = EXCLUDED.unit_price,
+        total_price          = EXCLUDED.total_price,
+        item_discount        = EXCLUDED.item_discount,
+        price_after_discount = EXCLUDED.price_after_discount
+""")
+
+
+def map_order_items(o: dict) -> list:
+    so = o.get('internalId')
+    if not so:
+        return []
+    rows = []
+    for item in (o.get('salesOrderItems') or []):
+        p     = item.get('product') or {}
+        specs = _specs(p)
+        sku   = (p.get('sku') or item.get('sku') or '').strip()
+        if not sku:
+            continue
+        qty   = int(item.get('quantity') or 1)
+        unit  = float(item.get('price') or p.get('price') or 0)
+        disc  = float(item.get('discount') or item.get('discountAmount') or 0)
+        total = round(unit * qty, 2)
+        rows.append({
+            'so_number':           so,
+            'sku':                 sku,
+            'product_name':        p.get('name') or item.get('productName'),
+            'size':                specs.get('size') or item.get('size'),
+            'color':               specs.get('color') or item.get('color'),
+            'quantity':            qty,
+            'unit_price':          round(unit, 2),
+            'total_price':         total,
+            'item_discount':       round(disc, 2),
+            'price_after_discount': round(total - disc, 2),
+        })
+    return rows
+
 
 # ── Sync functions ────────────────────────────────────────────────────────────
 
@@ -357,6 +403,14 @@ def sync_single_order(so_number: str):
         if order['pathao_waybill']:
             print(f"    Pathao waybill: {order['pathao_waybill']}")
 
+        # Upsert line items
+        items = map_order_items(raw)
+        for it in items:
+            conn.execute(UPSERT_ORDER_ITEM, it)
+        if items:
+            conn.commit()
+            print(f"    {len(items)} item(s) synced")
+
     print()
 
 
@@ -401,6 +455,8 @@ def sync_new_orders(max_misses: int = 50):
             order = map_order(raw)
             order['customer_id'] = customer_id
             conn.execute(UPSERT_ORDER, order)
+            for it in map_order_items(raw):
+                conn.execute(UPSERT_ORDER_ITEM, it)
             conn.commit()
         return order
 
@@ -502,6 +558,11 @@ def sync_active_orders(batch_size: int = 100):
         order = map_order(raw)
         order['customer_id'] = customer_id
         conn.execute(UPSERT_ORDER, order)
+        for it in map_order_items(raw):
+            try:
+                conn.execute(UPSERT_ORDER_ITEM, it)
+            except Exception:
+                pass  # never fail order sync due to an item
         if base_so and base_so != order['so_number']:
             conn.execute(text("""
                 UPDATE orders SET nuport_status = 'FLAGGED', updated_at = NOW()
