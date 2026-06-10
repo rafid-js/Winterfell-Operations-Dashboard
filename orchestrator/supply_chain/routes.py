@@ -724,11 +724,13 @@ SC_DETAIL_HTML = """<!doctype html>
       <span class="flabel">Stage</span>
       <div class="opt-row" id="opt-stage">
         <div class="opt" data-v="Fabric" onclick="pick(this,'stage')">Fabric</div>
+        <div class="opt" data-v="Cutting" onclick="pick(this,'stage')">Cutting</div>
+        <div class="opt" data-v="Print/Ambo" onclick="pick(this,'stage')">Print/Ambo</div>
         <div class="opt" data-v="Trims" onclick="pick(this,'stage')">Trims</div>
         <div class="opt" data-v="Sewing" onclick="pick(this,'stage')">Sewing</div>
+        <div class="opt" data-v="Wash" onclick="pick(this,'stage')">Wash</div>
         <div class="opt" data-v="QC" onclick="pick(this,'stage')">QC</div>
         <div class="opt" data-v="Delivery" onclick="pick(this,'stage')">Delivery</div>
-        <div class="opt" data-v="Other" onclick="pick(this,'stage')">Other</div>
       </div>
       <span class="flabel">Status</span>
       <div class="opt-row" id="opt-status">
@@ -893,14 +895,30 @@ function renderTimeline(events, currentStage, expected){
 
   var knownSet = {};
   for(var ks=0; ks<STAGES.length; ks++) knownSet[STAGES[ks]] = true;
-  var extraKeys = Object.keys(stageMap).filter(function(k){ return !knownSet[k]; });
 
-  for(var si=0; si<STAGES.length; si++){
-    var sname = STAGES[si];
-    var sdone = si < idx;
-    var sactive = si === idx;
-    var spending = si > idx;
+  // Build stage display order from the chronological event stream,
+  // then append any unseen pending STAGES at the end
+  var seenOrder = [];
+  var seenSet = {};
+  for(var ei2=0; ei2<events.length; ei2++){
+    var s2 = events[ei2].stage || 'PO Issued';
+    if(!seenSet[s2]){ seenOrder.push(s2); seenSet[s2] = true; }
+  }
+  // Active stage with no events yet still needs to appear
+  if(currentStage && !seenSet[currentStage]){ seenOrder.push(currentStage); seenSet[currentStage] = true; }
+  // Append pending STAGES not yet seen
+  for(var ps=0; ps<STAGES.length; ps++){
+    if(!seenSet[STAGES[ps]]){ seenOrder.push(STAGES[ps]); seenSet[STAGES[ps]] = true; }
+  }
+
+  for(var oi=0; oi<seenOrder.length; oi++){
+    var sname = seenOrder[oi];
+    var knownIdx2 = STAGES.indexOf(sname);
     var sevs = stageMap[sname] || [];
+    var sdone = knownIdx2 >= 0 && knownIdx2 < idx;
+    var sactive = knownIdx2 >= 0 && knownIdx2 === idx;
+    var spending = knownIdx2 < 0 ? false : knownIdx2 > idx;
+    var isExtra = knownIdx2 < 0; // not in main progress stages
     var dotcls = 'tl-sdot';
     var namecls = 'tl-sname';
     var dotinner = '';
@@ -908,6 +926,9 @@ function renderTimeline(events, currentStage, expected){
       dotcls += ' done'; namecls += ' done';
       dotinner = '<span style="color:#fff;font-size:10px;line-height:1;font-weight:700">&#10003;</span>';
     } else if(sactive){
+      dotcls += ' active'; namecls += ' active';
+      dotinner = '<span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span>';
+    } else if(isExtra && sevs.length > 0){
       dotcls += ' active'; namecls += ' active';
       dotinner = '<span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span>';
     } else {
@@ -925,20 +946,6 @@ function renderTimeline(events, currentStage, expected){
       h += '</div>';
     }
     h += '</div>';
-    // Extra stages (e.g. "Other") slot immediately after the active stage
-    if(sactive){
-      for(var ej=0; ej<extraKeys.length; ej++){
-        var ename = extraKeys[ej];
-        var eevs = stageMap[ename];
-        if(!eevs || eevs.length === 0) continue;
-        h += '<div class="tl-sgroup">';
-        h += '<div class="tl-shead"><span class="tl-sdot active"><span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span></span>';
-        h += '<span class="tl-sname active">' + esc(ename) + '</span></div>';
-        h += '<div class="tl-sevents">';
-        for(var em=0; em<eevs.length; em++){ h += evHtml(eevs[em]); }
-        h += '</div></div>';
-      }
-    }
   }
 
   if(h === ''){ h = '<div style="color:#8b949e">No events yet.</div>'; }
