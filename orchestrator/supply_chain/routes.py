@@ -860,7 +860,10 @@ SC_LIST_HTML = """<!doctype html>
       <div class="page-title">Supply Chain / Active POs</div>
       <div class="page-sub"><span class="dot"></span> Brain connected</div>
     </div>
-    <button class="btn btn-primary" onclick="openModal()">+ New PO</button>
+    <div style="display:flex;gap:8px">
+      <a href="/supply-chain/suppliers" class="btn btn-ghost">Suppliers &#8594;</a>
+      <button class="btn btn-primary" onclick="openModal()">+ New PO</button>
+    </div>
   </div>
 
   <div class="pills" id="pills">
@@ -1371,6 +1374,7 @@ function renderBanner(po){
   h += '<div class="meta">' + esc(po.supplier_name || 'No supplier') + ' &middot; ' + (po.quantity_ordered || 0) + ' pcs &middot; Due: ' + esc(arrive) + '</div>';
   h += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">';
   h += '<button class="btn btn-ghost" onclick="openEditModal()" style="font-size:12px">&#9998; Edit PO</button>';
+  h += '<a class="btn btn-ghost" href="/supply-chain/suppliers" style="font-size:12px">Suppliers</a>';
   h += '<a class="btn btn-ghost" href="/supply-chain/po/' + esc(po.po_id) + '/waiting-orders" style="font-size:12px">&#9201; Waiting Orders</a>';
   if(po.po_status !== 'Completed' && po.po_status !== 'Cancelled'){
     h += '<button class="btn btn-primary" onclick="openReceiveModal()" style="font-size:12px;background:#1D9E75">&#10003; Receive Stock</button>';
