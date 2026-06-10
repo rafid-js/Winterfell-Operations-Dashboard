@@ -626,7 +626,7 @@ SC_DETAIL_HTML = """<!doctype html>
 .tl-sdot.done{background:#1D9E75;border-color:#1D9E75}
 .tl-sdot.active{background:#7F77DD;border-color:#7F77DD;box-shadow:0 0 0 3px #EEEDFE}
 .tl-sdot.pending{border-style:dashed;opacity:.6}
-.tl-sname{font-size:12px;font-weight:700;color:var(--text-primary)}
+.tl-sname{font-size:14px;font-weight:700;color:var(--text-primary)}
 .tl-sname.done{color:#1D9E75}
 .tl-sname.active{color:#7F77DD}
 .tl-sname.pending{color:var(--text-tertiary);font-weight:400}
@@ -636,8 +636,8 @@ SC_DETAIL_HTML = """<!doctype html>
 .tl-body.b-finance{border-left-color:#BA7517}
 .tl-body.b-supplier{border-left-color:#378ADD}
 .tl-body.b-alert{border-left-color:var(--red)}
-.tl-title{color:var(--text-primary);font-weight:700;font-size:12px}
-.tl-note{color:var(--text-secondary);font-size:11px;margin-top:3px;line-height:1.55}
+.tl-title{color:var(--text-primary);font-weight:700;font-size:14px}
+.tl-note{color:var(--text-secondary);font-size:13px;margin-top:3px;line-height:1.55}
 .tl-amt{color:#BA7517;font-weight:500;font-size:12px;margin-top:3px}
 .tl-foot{display:flex;gap:10px;align-items:center;margin-top:5px}
 .tl-date{color:var(--text-tertiary);font-size:11px}
@@ -843,9 +843,26 @@ function renderTimeline(events, currentStage, expected){
     if(!stageMap[s]) stageMap[s] = [];
     stageMap[s].push(ev);
   }
+  var rendered = {};
   var h = '';
+
+  function evHtml(ev2){
+    var stype2 = ev2.is_alert ? 'alert' : ev2.source_type;
+    var bcls2 = ev2.is_alert ? 'alert' : srcClass(ev2.source_type);
+    var r = '<div class="tl-ev"><div class="tl-body b-' + bcls2 + '">';
+    r += '<div class="tl-title">' + esc(ev2.event_title) + '</div>';
+    if(ev2.event_note){ r += '<div class="tl-note">' + esc(ev2.event_note) + '</div>'; }
+    if(ev2.amount_bdt){ r += '<div class="tl-amt">' + fmtBDT(ev2.amount_bdt) + '</div>'; }
+    r += '<div class="tl-foot">';
+    r += '<span class="tl-date">' + esc((ev2.event_date || '').substring(0,16).replace('T',' ')) + '</span>';
+    r += '<span class="src-badge" style="' + srcBadgeStyle(stype2) + '">' + esc(ev2.logged_by || ev2.source_type) + '</span>';
+    r += '</div></div></div>';
+    return r;
+  }
+
   for(var si=0; si<STAGES.length; si++){
     var sname = STAGES[si];
+    rendered[sname] = true;
     var sdone = si < idx;
     var sactive = si === idx;
     var spending = si > idx;
@@ -870,23 +887,27 @@ function renderTimeline(events, currentStage, expected){
     h += '</div>';
     if(sevs.length > 0){
       h += '<div class="tl-sevents">';
-      for(var ei=0; ei<sevs.length; ei++){
-        var ev2 = sevs[ei];
-        var stype2 = ev2.is_alert ? 'alert' : ev2.source_type;
-        var bcls2 = ev2.is_alert ? 'alert' : srcClass(ev2.source_type);
-        h += '<div class="tl-ev"><div class="tl-body b-' + bcls2 + '">';
-        h += '<div class="tl-title">' + esc(ev2.event_title) + '</div>';
-        if(ev2.event_note){ h += '<div class="tl-note">' + esc(ev2.event_note) + '</div>'; }
-        if(ev2.amount_bdt){ h += '<div class="tl-amt">' + fmtBDT(ev2.amount_bdt) + '</div>'; }
-        h += '<div class="tl-foot">';
-        h += '<span class="tl-date">' + esc((ev2.event_date || '').substring(0,16).replace('T',' ')) + '</span>';
-        h += '<span class="src-badge" style="' + srcBadgeStyle(stype2) + '">' + esc(ev2.logged_by || ev2.source_type) + '</span>';
-        h += '</div></div></div>';
-      }
+      for(var ei=0; ei<sevs.length; ei++){ h += evHtml(sevs[ei]); }
       h += '</div>';
     }
     h += '</div>';
   }
+
+  // Render events whose stage name is not in STAGES (e.g. "Other", "Delivery")
+  var extraKeys = Object.keys(stageMap).filter(function(k){ return !rendered[k]; });
+  for(var ki=0; ki<extraKeys.length; ki++){
+    var ename = extraKeys[ki];
+    var eevs = stageMap[ename];
+    h += '<div class="tl-sgroup">';
+    h += '<div class="tl-shead">';
+    h += '<span class="tl-sdot active"><span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span></span>';
+    h += '<span class="tl-sname active">' + esc(ename) + '</span>';
+    h += '</div>';
+    h += '<div class="tl-sevents">';
+    for(var ej=0; ej<eevs.length; ej++){ h += evHtml(eevs[ej]); }
+    h += '</div></div>';
+  }
+
   if(h === ''){ h = '<div style="color:#8b949e">No events yet.</div>'; }
   document.getElementById('timeline').innerHTML = h;
 }
