@@ -128,8 +128,25 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
 .nav-link:hover{border-color:var(--header-border);color:#e6edf3}
 .nav-link.active{border-color:var(--header-border);color:#e6edf3;background:#21262d}
 .logout{color:#8b949e;font-size:.8rem;text-decoration:none;padding:4px 10px;
-        border:1px solid var(--header-border);border-radius:6px}
+        border:1px solid var(--header-border);border-radius:6px;white-space:nowrap}
 .logout:hover{border-color:#8b949e;color:#e6edf3}
+.ham{display:none;flex-direction:column;gap:5px;cursor:pointer;background:none;border:none;padding:4px}
+.ham span{width:20px;height:2px;background:#8b949e;border-radius:2px;display:block}
+.mob-nav{display:none;position:absolute;top:100%;left:0;right:0;background:var(--header-bg);
+         border-bottom:1px solid var(--header-border);padding:10px 16px;
+         flex-direction:column;gap:4px;z-index:49}
+.mob-nav a{color:#8b949e;font-size:.9rem;text-decoration:none;padding:8px 12px;border-radius:6px;display:block}
+.mob-nav a:hover,.mob-nav a.active{color:#e6edf3;background:#21262d}
+@media(max-width:700px){
+  .top-nav{display:none!important}
+  .ham{display:flex}
+  header{position:relative}
+  .mob-nav.open{display:flex}
+  .container{padding:14px 12px}
+  .tbl-wrap,.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .bigstages{padding:16px}
+  .banner{flex-direction:column}
+}
 
 /* ── light body ────────────────────────────────────────────────────────── */
 .container{max-width:1100px;margin:0 auto;padding:24px}
@@ -254,7 +271,18 @@ SC_LIST_HTML = """<!doctype html>
       <a href="/supply-chain" class="nav-link active">Supply Chain</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
+    <button class="ham" onclick="document.getElementById('mnav-sc').classList.toggle('open')" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
   </div>
+  <nav class="mob-nav" id="mnav-sc">
+    <a href="/">Operations</a>
+    <a href="/products">Products</a>
+    <a href="/customers">Customers</a>
+    <a href="/orders">Orders</a>
+    <a href="/supply-chain" class="active">Supply Chain</a>
+    <a href="/logout">Logout</a>
+  </nav>
 </header>
 <div class="container">
   <div class="page-head">
@@ -626,7 +654,18 @@ SC_DETAIL_HTML = """<!doctype html>
       <a href="/supply-chain" class="nav-link active">Supply Chain</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
+    <button class="ham" onclick="document.getElementById('mnav-sc').classList.toggle('open')" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
   </div>
+  <nav class="mob-nav" id="mnav-sc">
+    <a href="/">Operations</a>
+    <a href="/products">Products</a>
+    <a href="/customers">Customers</a>
+    <a href="/orders">Orders</a>
+    <a href="/supply-chain" class="active">Supply Chain</a>
+    <a href="/logout">Logout</a>
+  </nav>
 </header>
 <div class="container">
   <div class="crumb"><a href="/supply-chain">Supply Chain</a> / <span id="cr-po" class="mono">&hellip;</span> / Timeline</div>
