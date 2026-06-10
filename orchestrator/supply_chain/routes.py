@@ -883,19 +883,30 @@ SC_LIST_HTML = """<!doctype html>
 .mtx-cost{margin-left:auto;text-align:right}
 .mtx-cost .mc-val{font-size:16px;font-weight:700;color:var(--text-primary)}
 #mtx-reset{font-size:12px;padding:7px 12px}
-.mtx-grid{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.mtx-col{flex:1 1 0;min-width:74px;text-align:center}
-.mtx-size{font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:6px}
-.mtx-qty{width:100%;text-align:center;border-radius:8px;padding:9px 4px;font-size:15px;font-weight:600;
+.mtx-tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.mtx-tbl{border-collapse:collapse;width:100%}
+.mtx-tbl th,.mtx-tbl td{text-align:center;padding:5px 7px;font-size:12px;color:var(--text-secondary)}
+.mtx-tbl thead th{font-size:14px;font-weight:700;color:var(--text-primary);padding-bottom:7px}
+.mtx-tbl thead th:first-child{text-align:left}
+.mtx-tbl td.rlabel{text-align:left;font-size:10px;color:var(--text-tertiary);white-space:nowrap;
+  text-transform:uppercase;letter-spacing:.04em;font-weight:600;padding-right:14px}
+.mtx-tbl .r-brain{display:none}
+.mtx-tbl.show-brain .r-brain{display:table-row}
+.mtx-tbl .r-pct td{font-weight:700;color:var(--text-primary)}
+.mtx-tbl .r-need td{color:#3C3489;font-weight:600}
+.mtx-tbl .r-wait td{color:#633806;font-weight:600}
+.mtx-tbl .r-sku td{font-family:'Courier New',monospace;font-size:9px;color:var(--text-tertiary);
+  word-break:break-all;max-width:80px}
+.mtx-qty{width:64px;text-align:center;border-radius:8px;padding:9px 4px;font-size:15px;font-weight:600;
   border:1.5px solid var(--border);font-family:Arial,sans-serif}
 .mtx-qty:focus{outline:none;box-shadow:0 0 0 3px rgba(127,119,221,.18)}
-.mtx-pct{font-size:12px;color:var(--text-secondary);margin-top:6px;font-weight:600}
-.mtx-ctx{font-size:10px;color:var(--text-tertiary);margin-top:4px;line-height:1.4}
 /* colour states */
 .state-auto{background:#E1F5EE;border-color:#5DCAA5;color:#085041}
 .state-manual{background:#EEEDFE;border-color:#7F77DD;color:#3C3489}
 .state-dist{background:#FAEEDA;border-color:#EF9F27;color:#633806}
-.mtx-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--text-tertiary)}
+.mtx-toggle{background:none;border:none;color:var(--purple);font-size:12px;cursor:pointer;
+  padding:8px 0 0 0;font-family:Arial,sans-serif}
+.mtx-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--text-tertiary)}
 .mtx-legend span{display:inline-flex;align-items:center;gap:5px}
 .mtx-legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
 
@@ -1286,22 +1297,27 @@ function pickProduct(i){
 
 function initPMX(d){
   PMX = {
-    product_name: d.product_name, color: d.color || '', sku_base: d.sku_base || '',
+    product_name: d.product_name, sku_base: d.sku_base || '',
     unit_cost: Number(d.unit_cost_bdt || 0),
     sizes: d.sizes || [],
+    skus: d.skus || [],
     auto_qty: (d.auto_qty || []).slice(),
     current_qty: (d.auto_qty || []).slice(),
     size_state: (d.sizes || []).map(function(){ return 'auto'; }),
+    net_need: d.net_need || [],
+    daily_velocity: d.daily_velocity || [],
     current_stock: d.current_stock || [],
     sales_30d: d.sales_30d || [],
     waiting_orders: d.waiting_orders || [],
+    lead_time_days: d.lead_time_days, buffer_days: d.buffer_days,
+    coverage_days: d.coverage_days,
     total_auto: d.total_auto || 0,
     total_current: d.total_auto || 0,
+    total_30d_sales: d.total_30d_sales || 0,
     total_state: 'auto'
   };
   // hidden fields used on submit
   document.getElementById('f-product').value = PMX.product_name;
-  document.getElementById('f-color').value = PMX.color;
   document.getElementById('f-sku').value = PMX.sku_base;
   // prefill unit cost only if empty
   var costEl = document.getElementById('f-cost');
@@ -1310,10 +1326,10 @@ function initPMX(d){
   // selected-product summary + hide search field
   var sp = document.getElementById('selected-product');
   sp.style.display = 'flex';
-  sp.innerHTML = '<div><div class="sp-name">' + esc(PMX.product_name)
-    + (PMX.color ? ' &middot; ' + esc(PMX.color) : '') + '</div>'
+  sp.innerHTML = '<div><div class="sp-name">' + esc(PMX.product_name) + '</div>'
     + '<div class="sp-meta">' + PMX.sizes.length + ' sizes &middot; Brain suggests '
-    + PMX.total_auto + ' pcs (' + (d.total_30d_sales || 0) + ' sold in 30d)</div></div>'
+    + PMX.total_auto + ' pcs (' + (d.total_30d_sales || 0) + ' sold in 30d, '
+    + 'lead ' + PMX.lead_time_days + 'd + ' + PMX.buffer_days + 'd buffer)</div></div>'
     + '<button class="sp-change" onclick="changeProduct()">Change</button>';
   document.getElementById('picker-field').style.display = 'none';
 
@@ -1345,26 +1361,61 @@ function renderMatrix(){
      + '<div class="mc-val" id="mtx-cost-val">' + fmtBDT(orderCost()) + '</div></div>';
   h += '</div>';
 
-  h += '<div class="mtx-grid" id="mtx-grid">';
-  for(var i=0; i<PMX.sizes.length; i++){
-    h += '<div class="mtx-col">';
-    h += '<div class="mtx-size">' + esc(PMX.sizes[i]) + '</div>';
-    h += '<input class="mtx-qty state-' + PMX.size_state[i] + '" id="mq-' + i + '" data-i="' + i + '" '
-       + 'type="number" min="0" step="1" value="' + PMX.current_qty[i] + '" '
-       + 'oninput="onSizeInput(' + i + ')"></div>';
-  }
-  h += '</div>';
+  var n = PMX.sizes.length;
+  h += '<div class="mtx-tbl-wrap"><table class="mtx-tbl" id="mtx-tbl">';
 
-  h += '<div class="mtx-grid" id="mtx-pct-row" style="overflow:visible">';
-  for(var j=0; j<PMX.sizes.length; j++){
-    h += '<div class="mtx-col">';
-    h += '<div class="mtx-pct" id="pct-' + j + '">' + pct(j) + '</div>';
-    h += '<div class="mtx-ctx">stk ' + (PMX.current_stock[j]||0)
-       + '<br>30d ' + (PMX.sales_30d[j]||0)
-       + '<br>wait ' + (PMX.waiting_orders[j]||0) + '</div>';
-    h += '</div>';
+  // header: size labels
+  h += '<thead><tr><th>Size</th>';
+  for(var s=0; s<n; s++){ h += '<th>' + esc(PMX.sizes[s]) + '</th>'; }
+  h += '</tr></thead><tbody>';
+
+  // Row 1 — Qty to order (editable)
+  h += '<tr class="r-qty"><td class="rlabel">Qty to order</td>';
+  for(var i=0; i<n; i++){
+    h += '<td><input class="mtx-qty state-' + PMX.size_state[i] + '" id="mq-' + i + '" data-i="' + i + '" '
+       + 'type="number" min="0" step="1" value="' + PMX.current_qty[i] + '" '
+       + 'oninput="onSizeInput(' + i + ')"></td>';
   }
-  h += '</div>';
+  h += '</tr>';
+
+  // Row 2 — % of total
+  h += '<tr class="r-pct"><td class="rlabel">% of total</td>';
+  for(var p=0; p<n; p++){ h += '<td id="pct-' + p + '">' + pct(p) + '</td>'; }
+  h += '</tr>';
+
+  // Row 3 — Current stock
+  h += '<tr class="r-stock"><td class="rlabel">Current stock</td>';
+  for(var st=0; st<n; st++){ h += '<td>' + (PMX.current_stock[st]||0) + '</td>'; }
+  h += '</tr>';
+
+  // Row 4 — 30-day sales (Brain data, toggle)
+  h += '<tr class="r-brain"><td class="rlabel">30-day sales</td>';
+  for(var sl=0; sl<n; sl++){ h += '<td>' + (PMX.sales_30d[sl]||0) + '</td>'; }
+  h += '</tr>';
+
+  // Row 5 — Daily velocity (Brain data, toggle)
+  h += '<tr class="r-brain"><td class="rlabel">Daily velocity</td>';
+  for(var dv=0; dv<n; dv++){ h += '<td>' + (PMX.daily_velocity[dv]!=null?PMX.daily_velocity[dv]:'0') + '</td>'; }
+  h += '</tr>';
+
+  // Row 6 — Net need (Brain data, toggle)
+  h += '<tr class="r-brain r-need"><td class="rlabel">Net need</td>';
+  for(var nn=0; nn<n; nn++){ h += '<td>' + (PMX.net_need[nn]||0) + '</td>'; }
+  h += '</tr>';
+
+  // Row 7 — Waiting orders
+  h += '<tr class="r-wait"><td class="rlabel">Waiting orders</td>';
+  for(var w=0; w<n; w++){ h += '<td>' + (PMX.waiting_orders[w]||0) + '</td>'; }
+  h += '</tr>';
+
+  // Row 8 — SKU
+  h += '<tr class="r-sku"><td class="rlabel">SKU</td>';
+  for(var k=0; k<n; k++){ h += '<td>' + esc(PMX.skus[k]||'') + '</td>'; }
+  h += '</tr>';
+
+  h += '</tbody></table></div>';
+
+  h += '<button class="mtx-toggle" id="mtx-toggle" onclick="toggleBrainData()">Show Brain data &#9662;</button>';
 
   h += '<div class="mtx-legend">'
      + '<span><i style="background:#5DCAA5"></i> Brain auto</span>'
@@ -1373,6 +1424,16 @@ function renderMatrix(){
   h += '</div>';
   document.getElementById('size-matrix').innerHTML = h;
   refreshBanner();
+}
+
+function toggleBrainData(){
+  var tbl = document.getElementById('mtx-tbl');
+  var btn = document.getElementById('mtx-toggle');
+  if(tbl.classList.contains('show-brain')){
+    tbl.classList.remove('show-brain'); btn.innerHTML = 'Show Brain data &#9662;';
+  } else {
+    tbl.classList.add('show-brain'); btn.innerHTML = 'Hide Brain data &#9652;';
+  }
 }
 
 function tstateCls(){
@@ -1426,7 +1487,7 @@ function onSizeInput(i){
   applyStateClasses(); updatePctRow(); updateCost(); refreshBanner();
 }
 
-/* ── RULE 3: edit total → redistribute by original auto ratios ────────────*/
+/* ── RULE 3: edit total → redistribute by NET-NEED ratios, waiting floor ──*/
 function onTotalInput(){
   var tot = document.getElementById('mtx-total');
   var nt = parseInt(tot.value, 10);
@@ -1436,30 +1497,45 @@ function onTotalInput(){
 
   var n = PMX.sizes.length;
   var newq = new Array(n);
-  var sumFloor = 0;
-  if(PMX.total_auto > 0){
-    for(var i=0; i<n; i++){
-      var ratio = PMX.auto_qty[i] / PMX.total_auto;
-      newq[i] = Math.floor(ratio * nt);
-      sumFloor += newq[i];
+  var i;
+
+  // Waiting orders are hard floors — reserve them first.
+  var waitSum = 0;
+  for(i=0; i<n; i++){ waitSum += (PMX.waiting_orders[i]||0); }
+  // Pool left to distribute across net-need above the waiting floors.
+  var pool = Math.max(0, nt - waitSum);
+
+  var needSum = 0;
+  for(i=0; i<n; i++){ needSum += (PMX.net_need[i]||0); }
+
+  var distSum = 0;
+  for(i=0; i<n; i++){
+    var share = 0;
+    if(needSum > 0){
+      share = Math.floor((PMX.net_need[i]||0) / needSum * pool);
+    } else {
+      share = Math.floor(pool / n);          // no deficit anywhere → spread evenly
     }
-  } else {
-    var base = Math.floor(nt / n);
-    for(var k=0; k<n; k++){ newq[k] = base; sumFloor += base; }
+    newq[i] = (PMX.waiting_orders[i]||0) + share;   // floor = waiting orders
+    distSum += newq[i];
   }
-  // remainder → size with highest 30d sales
-  var rem = nt - sumFloor;
-  if(rem > 0){
-    var maxIdx = 0, maxV = -1;
-    for(var m=0; m<n; m++){ if((PMX.sales_30d[m]||0) > maxV){ maxV = PMX.sales_30d[m]||0; maxIdx = m; } }
-    newq[maxIdx] += rem;
+
+  // Rounding remainder → highest net-need size (fallback: highest waiting).
+  var rem = nt - distSum;
+  var hi = 0, hiV = -1;
+  for(i=0; i<n; i++){
+    var v = needSum > 0 ? (PMX.net_need[i]||0) : (PMX.waiting_orders[i]||0);
+    if(v > hiV){ hiV = v; hi = i; }
   }
+  newq[hi] = Math.max((PMX.waiting_orders[hi]||0), newq[hi] + rem);
+
   PMX.current_qty = newq;
   PMX.size_state = PMX.sizes.map(function(){ return 'dist'; });   // all amber
-  PMX.total_current = nt;
+  PMX.total_current = sumQty();
   PMX.total_state = 'redistributed';
 
   for(var s=0; s<n; s++){ var se = document.getElementById('mq-'+s); if(se) se.value = newq[s]; }
+  if(PMX.total_current !== nt && tot){ tot.value = PMX.total_current; }
   applyStateClasses(); updatePctRow(); updateCost(); refreshBanner();
 }
 
@@ -1518,7 +1594,7 @@ function submitPo(){
   for(var j=0;j<PMX.sizes.length;j++){ breakdown.push({size: PMX.sizes[j], qty: PMX.current_qty[j]}); }
 
   var body = {
-    product_name: PMX.product_name + (PMX.color ? ' - ' + PMX.color : ''),
+    product_name: PMX.product_name,
     sku: document.getElementById('f-sku').value.trim(),
     supplier_name: document.getElementById('f-supplier').value.trim(),
     quantity_ordered: PMX.total_current,
