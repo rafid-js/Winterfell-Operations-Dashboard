@@ -672,8 +672,8 @@ async function loadStatus() {
     document.getElementById('s-run').textContent   = summary.running;
     document.getElementById('s-never').textContent = summary.never;
     document.getElementById('s-total').textContent = summary.total;
-    document.getElementById('server-time').textContent =
-      new Date(server_time).toLocaleTimeString();
+    const stEl = document.getElementById('server-time');
+    if(stEl) stEl.textContent = new Date(server_time).toLocaleTimeString();
 
     const grid = document.getElementById('scripts-grid');
     grid.innerHTML = scripts.map(sc => {
