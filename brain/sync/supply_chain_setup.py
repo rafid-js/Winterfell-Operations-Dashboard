@@ -1,0 +1,164 @@
+"""
+Supply Chain module — Phase 1 migration.
+
+Creates suppliers, purchase_orders and po_timeline tables (in FK-dependency
+order), supporting indexes, the active_po_summary view, and seeds the
+po_risk_engine row into system_status.
+
+Safe to re-run — uses IF NOT EXISTS / CREATE OR REPLACE / ON CONFLICT throughout.
+
+Run once from brain/:
+  python -m sync.supply_chain_setup
+"""
+import sys
+from sqlalchemy import text
+
+sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
+from db import get_connection
+
+
+SUPPLIERS_SQL = """
+CREATE TABLE IF NOT EXISTS suppliers (
+    id                    SERIAL PRIMARY KEY,
+    name                  VARCHAR(200) UNIQUE NOT NULL,
+    phone                 VARCHAR(20),
+    whatsapp              VARCHAR(20),
+    email                 VARCHAR(200),
+    speciality            TEXT[],
+    location              VARCHAR(200),
+    reliability_score     NUMERIC(4,2) DEFAULT 5.00,
+    total_pos             INTEGER DEFAULT 0,
+    completed_pos         INTEGER DEFAULT 0,
+    on_time_count         INTEGER DEFAULT 0,
+    delayed_count         INTEGER DEFAULT 0,
+    avg_lead_days         NUMERIC(5,1),
+    quality_issue_count   INTEGER DEFAULT 0,
+    last_po_date          DATE,
+    is_preferred          BOOLEAN DEFAULT FALSE,
+    is_blacklisted        BOOLEAN DEFAULT FALSE,
+    notes                 TEXT,
+    created_at            TIMESTAMP DEFAULT NOW(),
+    updated_at            TIMESTAMP DEFAULT NOW()
+);
+"""
+
+PURCHASE_ORDERS_SQL = """
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    id                    SERIAL PRIMARY KEY,
+    po_id                 VARCHAR(20) UNIQUE NOT NULL,
+    sku                   VARCHAR(200) REFERENCES skus(sku),
+    product_name          VARCHAR(300),
+    supplier_id           INTEGER REFERENCES suppliers(id),
+    quantity_ordered      INTEGER NOT NULL,
+    quantity_received     INTEGER DEFAULT 0,
+    quantity_rejected     INTEGER DEFAULT 0,
+    unit_cost_bdt         NUMERIC(10,2),
+    total_cost_bdt        NUMERIC(12,2),
+    advance_paid_bdt      NUMERIC(12,2) DEFAULT 0,
+    balance_due_bdt       NUMERIC(12,2),
+    total_paid_bdt        NUMERIC(12,2) DEFAULT 0,
+    current_stage         VARCHAR(50) DEFAULT 'PO Issued',
+    stage_completion_pct  INTEGER DEFAULT 0,
+    po_status             VARCHAR(20) DEFAULT 'Active',
+    issued_date           DATE NOT NULL,
+    due_date              DATE NOT NULL,
+    expected_delivery     DATE,
+    actual_delivery       DATE,
+    triggered_by          VARCHAR(50) DEFAULT 'manual',
+    linked_so_numbers     TEXT[],
+    meta_campaign_paused  BOOLEAN DEFAULT FALSE,
+    meta_campaign_id      VARCHAR(100),
+    notes                 TEXT,
+    created_at            TIMESTAMP DEFAULT NOW(),
+    updated_at            TIMESTAMP DEFAULT NOW()
+);
+"""
+
+PO_TIMELINE_SQL = """
+CREATE TABLE IF NOT EXISTS po_timeline (
+    id              SERIAL PRIMARY KEY,
+    event_id        VARCHAR(20) UNIQUE,
+    po_id           VARCHAR(20) REFERENCES purchase_orders(po_id),
+    stage           VARCHAR(50) NOT NULL,
+    event_title     VARCHAR(200) NOT NULL,
+    event_note      TEXT,
+    amount_bdt      NUMERIC(12,2),
+    source_type     VARCHAR(20) NOT NULL,
+    source_ref      VARCHAR(200),
+    logged_by       VARCHAR(100),
+    event_date      TIMESTAMP NOT NULL DEFAULT NOW(),
+    is_alert        BOOLEAN DEFAULT FALSE,
+    alert_severity  VARCHAR(20),
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+"""
+
+INDEXES_SQL = [
+    "CREATE INDEX IF NOT EXISTS idx_po_status   ON purchase_orders(po_status);",
+    "CREATE INDEX IF NOT EXISTS idx_po_stage    ON purchase_orders(current_stage);",
+    "CREATE INDEX IF NOT EXISTS idx_po_due      ON purchase_orders(due_date);",
+    "CREATE INDEX IF NOT EXISTS idx_po_supplier ON purchase_orders(supplier_id);",
+    "CREATE INDEX IF NOT EXISTS idx_tl_po       ON po_timeline(po_id);",
+    "CREATE INDEX IF NOT EXISTS idx_tl_source   ON po_timeline(source_type);",
+    "CREATE INDEX IF NOT EXISTS idx_tl_date     ON po_timeline(event_date);",
+]
+
+VIEW_SQL = """
+CREATE OR REPLACE VIEW active_po_summary AS
+SELECT
+    po.po_id, po.product_name, po.sku,
+    s.name AS supplier_name,
+    po.quantity_ordered, po.quantity_received,
+    po.current_stage, po.stage_completion_pct, po.po_status,
+    po.issued_date, po.due_date,
+    po.unit_cost_bdt, po.total_cost_bdt,
+    po.advance_paid_bdt, po.balance_due_bdt, po.total_paid_bdt,
+    po.notes,
+    CASE WHEN po.actual_delivery IS NULL
+         THEN GREATEST((CURRENT_DATE - po.due_date)::INTEGER, 0)
+         ELSE 0 END AS days_overdue,
+    s.reliability_score AS supplier_score,
+    (SELECT COUNT(*) FROM po_timeline t WHERE t.po_id = po.po_id) AS event_count,
+    (SELECT MAX(event_date) FROM po_timeline t WHERE t.po_id = po.po_id) AS last_update
+FROM purchase_orders po
+LEFT JOIN suppliers s ON po.supplier_id = s.id
+WHERE po.po_status NOT IN ('Completed', 'Cancelled')
+ORDER BY
+    CASE po.po_status WHEN 'Delayed' THEN 1 WHEN 'At Risk' THEN 2 ELSE 3 END,
+    po.due_date ASC;
+"""
+
+SYSTEM_STATUS_SQL = """
+INSERT INTO system_status (script_name, display_name, schedule)
+VALUES ('po_risk_engine', 'PO risk recalculation', 'Every 6 hours')
+ON CONFLICT (script_name) DO NOTHING;
+"""
+
+
+def run():
+    with get_connection() as conn:
+        print("Creating suppliers ...")
+        conn.execute(text(SUPPLIERS_SQL))
+
+        print("Creating purchase_orders ...")
+        conn.execute(text(PURCHASE_ORDERS_SQL))
+
+        print("Creating po_timeline ...")
+        conn.execute(text(PO_TIMELINE_SQL))
+
+        print("Creating indexes ...")
+        for stmt in INDEXES_SQL:
+            conn.execute(text(stmt))
+
+        print("Creating active_po_summary view ...")
+        conn.execute(text(VIEW_SQL))
+
+        print("Seeding system_status (po_risk_engine) ...")
+        conn.execute(text(SYSTEM_STATUS_SQL))
+
+        conn.commit()
+    print("Supply Chain Phase 1 migration complete.")
+
+
+if __name__ == '__main__':
+    run()
