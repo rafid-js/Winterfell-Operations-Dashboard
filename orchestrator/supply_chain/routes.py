@@ -558,23 +558,34 @@ SC_DETAIL_HTML = """<!doctype html>
 .bigstages{background:#fff;border:0.5px solid var(--border);border-radius:12px;
            padding:24px 28px;margin-bottom:1.25rem}
 .bs-row{display:flex;align-items:center}
-.bs-dot{width:14px;height:14px;border-radius:50%;border:1.5px solid #CBD5E0;background:#fff;flex:0 0 auto}
+.bs-dot{width:22px;height:22px;border-radius:50%;border:1.5px solid #CBD5E0;background:#fff;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
 .bs-dot.done{background:#1D9E75;border-color:#1D9E75}
 .bs-dot.active{background:#7F77DD;border-color:#7F77DD;box-shadow:0 0 0 3px #EEEDFE}
 .bs-line{height:3px;flex:1;background:var(--track);border-radius:2px}
 .bs-line.done{background:#1D9E75}
 .bs-line.active{background:linear-gradient(90deg,#1D9E75,#7F77DD)}
 .bs-labels{display:flex;margin-top:10px}
-.bs-lbl{flex:1;text-align:center;font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em}
+.bs-lbl{flex:1;text-align:center;font-size:10px;color:var(--text-tertiary)}
 .bs-lbl:first-child{text-align:left}
 .bs-lbl:last-child{text-align:right}
 .bs-lbl.active{color:var(--purple);font-weight:500}
 .bs-lbl.done{color:var(--teal)}
 .section-title{font-size:11px;font-weight:500;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.07em;margin:0 0 14px 0}
 .tl{background:#fff;border:0.5px solid var(--border);border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.25rem}
-.tl-ev{display:flex;gap:14px;padding:12px 0;border-bottom:0.5px solid var(--border)}
-.tl-ev:last-child{border-bottom:none}
-.tl-body{flex:1;border-left:2px solid var(--border);padding-left:12px}
+.tl-ev{padding:5px 0}
+.tl-body{border-left:2px solid var(--border);padding-left:12px}
+.src-ico{display:none!important}
+.tl-sgroup{margin-bottom:18px}
+.tl-shead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.tl-sdot{width:18px;height:18px;border-radius:50%;border:1.5px solid #CBD5E0;background:#fff;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+.tl-sdot.done{background:#1D9E75;border-color:#1D9E75}
+.tl-sdot.active{background:#7F77DD;border-color:#7F77DD;box-shadow:0 0 0 3px #EEEDFE}
+.tl-sdot.pending{border-style:dashed;opacity:.6}
+.tl-sname{font-size:12px;font-weight:600;color:var(--text-primary)}
+.tl-sname.done{color:#1D9E75}
+.tl-sname.active{color:#7F77DD}
+.tl-sname.pending{color:var(--text-tertiary);font-weight:400}
+.tl-sevents{margin-left:26px;padding-left:12px;border-left:2px solid var(--border);padding-top:2px;padding-bottom:2px}
 .tl-body.b-brain{border-left-color:#1D9E75}
 .tl-body.b-pm{border-left-color:#7F77DD}
 .tl-body.b-finance{border-left-color:#BA7517}
@@ -699,11 +710,11 @@ function srcClass(t){
   return 'alert';
 }
 function srcBadgeStyle(t){
-  if(t === 'brain') return 'background:#04342C;color:#9FE1CB';
-  if(t === 'pm') return 'background:#26215C;color:#CECBF6';
-  if(t === 'finance') return 'background:#412402;color:#FAC775';
-  if(t === 'supplier') return 'background:#0C1F35;color:#7EB8F5';
-  return 'background:#501313;color:#F7C1C1';
+  if(t === 'brain') return 'background:#E1F5EE;color:#085041';
+  if(t === 'pm') return 'background:#EEEDFE;color:#3C3489';
+  if(t === 'finance') return 'background:#FAEEDA;color:#633806';
+  if(t === 'supplier') return 'background:#E6F1FB;color:#0C447C';
+  return 'background:#FCEBEB;color:#791F1F';
 }
 function srcLabel(t){
   if(t === 'brain') return 'B';
@@ -744,9 +755,10 @@ function renderBigStages(currentStage, expected){
   var h = '<div class="bs-row">';
   for(var i=0; i<STAGES.length; i++){
     var cls = 'bs-dot';
-    if(i < idx) cls += ' done';
-    else if(i === idx) cls += ' active';
-    h += '<span class="' + cls + '"></span>';
+    var inner = '';
+    if(i < idx){ cls += ' done'; inner = '<span style="color:#fff;font-size:11px;line-height:1;font-weight:700">&#10003;</span>'; }
+    else if(i === idx){ cls += ' active'; inner = '<span style="width:7px;height:7px;border-radius:50%;background:#fff;display:inline-block"></span>'; }
+    h += '<span class="' + cls + '">' + inner + '</span>';
     if(i < STAGES.length - 1){
       var lcls = 'bs-line';
       if(i < idx) lcls += ' done';
@@ -766,30 +778,59 @@ function renderBigStages(currentStage, expected){
 }
 
 function renderTimeline(events, currentStage, expected){
-  var h = '';
-  if(events.length === 0){ h += '<div style="color:#8b949e">No events yet.</div>'; }
+  var idx = STAGES.indexOf(currentStage);
+  var stageMap = {};
   for(var i=0; i<events.length; i++){
     var ev = events[i];
-    var stype = ev.is_alert ? 'alert' : ev.source_type;
-    var bcls = ev.is_alert ? 'alert' : srcClass(ev.source_type);
-    h += '<div class="tl-ev">';
-    h += '<div class="src-ico ' + ('src-' + bcls) + '">' + (ev.is_alert ? '!' : srcLabel(ev.source_type)) + '</div>';
-    h += '<div class="tl-body b-' + bcls + '">';
-    h += '<div class="tl-title">' + esc(ev.event_title) + '</div>';
-    if(ev.event_note){ h += '<div class="tl-note">' + esc(ev.event_note) + '</div>'; }
-    if(ev.amount_bdt){ h += '<div class="tl-amt">' + fmtBDT(ev.amount_bdt) + '</div>'; }
-    h += '<div class="tl-foot">';
-    h += '<span class="tl-date">' + esc((ev.event_date || '').substring(0,16).replace('T',' ')) + '</span>';
-    h += '<span class="src-badge" style="' + srcBadgeStyle(stype) + '">' + esc(ev.logged_by || ev.source_type) + '</span>';
-    h += '</div></div></div>';
+    var s = ev.stage || 'PO Issued';
+    if(!stageMap[s]) stageMap[s] = [];
+    stageMap[s].push(ev);
   }
-  // Pending stages greyed out.
-  var idx = STAGES.indexOf(currentStage);
-  for(var k=idx+1; k<STAGES.length; k++){
-    var waitTxt = 'Waiting';
-    if(expected){ waitTxt += ' &mdash; expected ' + esc(expected.substring(0,10)); }
-    h += '<div class="tl-pending"><div class="pdot"></div><div class="tl-body"><div class="tl-title">' + esc(STAGES[k]) + '</div><div class="tl-note">' + waitTxt + '</div></div></div>';
+  var h = '';
+  for(var si=0; si<STAGES.length; si++){
+    var sname = STAGES[si];
+    var sdone = si < idx;
+    var sactive = si === idx;
+    var spending = si > idx;
+    var sevs = stageMap[sname] || [];
+    var dotcls = 'tl-sdot';
+    var namecls = 'tl-sname';
+    var dotinner = '';
+    if(sdone){
+      dotcls += ' done'; namecls += ' done';
+      dotinner = '<span style="color:#fff;font-size:10px;line-height:1;font-weight:700">&#10003;</span>';
+    } else if(sactive){
+      dotcls += ' active'; namecls += ' active';
+      dotinner = '<span style="width:5px;height:5px;border-radius:50%;background:#fff;display:inline-block"></span>';
+    } else {
+      dotcls += ' pending'; namecls += ' pending';
+    }
+    h += '<div class="tl-sgroup">';
+    h += '<div class="tl-shead"><span class="' + dotcls + '">' + dotinner + '</span><span class="' + namecls + '">' + esc(sname) + '</span>';
+    if(spending && expected){
+      h += ' <span style="font-size:11px;color:var(--text-tertiary);font-weight:400">&#8212; expected ' + esc(expected.substring(0,10)) + '</span>';
+    }
+    h += '</div>';
+    if(sevs.length > 0){
+      h += '<div class="tl-sevents">';
+      for(var ei=0; ei<sevs.length; ei++){
+        var ev2 = sevs[ei];
+        var stype2 = ev2.is_alert ? 'alert' : ev2.source_type;
+        var bcls2 = ev2.is_alert ? 'alert' : srcClass(ev2.source_type);
+        h += '<div class="tl-ev"><div class="tl-body b-' + bcls2 + '">';
+        h += '<div class="tl-title">' + esc(ev2.event_title) + '</div>';
+        if(ev2.event_note){ h += '<div class="tl-note">' + esc(ev2.event_note) + '</div>'; }
+        if(ev2.amount_bdt){ h += '<div class="tl-amt">' + fmtBDT(ev2.amount_bdt) + '</div>'; }
+        h += '<div class="tl-foot">';
+        h += '<span class="tl-date">' + esc((ev2.event_date || '').substring(0,16).replace('T',' ')) + '</span>';
+        h += '<span class="src-badge" style="' + srcBadgeStyle(stype2) + '">' + esc(ev2.logged_by || ev2.source_type) + '</span>';
+        h += '</div></div></div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
   }
+  if(h === ''){ h = '<div style="color:#8b949e">No events yet.</div>'; }
   document.getElementById('timeline').innerHTML = h;
 }
 
