@@ -394,12 +394,12 @@ SC_SUPPLIERS_HTML = """<!doctype html>
 
 /* detail slide-in panel */
 .sup-detail{display:none;background:#fff;border:0.5px solid var(--border);border-radius:12px;
-            padding:1.25rem;margin-bottom:1rem}
+            padding:1.5rem;margin-bottom:1rem}
 .sup-detail.open{display:block}
-.po-hist-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.po-hist-tbl{width:100%;border-collapse:collapse}
 .po-hist-tbl th{text-align:left;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;
-                 letter-spacing:.05em;padding:6px 8px;border-bottom:0.5px solid var(--border)}
-.po-hist-tbl td{padding:7px 8px;border-bottom:0.5px solid var(--border);color:var(--text-secondary)}
+                 letter-spacing:.05em;padding:9px 12px;border-bottom:0.5px solid var(--border);font-size:12px}
+.po-hist-tbl td{padding:11px 12px;border-bottom:0.5px solid var(--border);color:var(--text-secondary);font-size:13px}
 .po-hist-tbl tr:last-child td{border-bottom:none}
 .po-hist-tbl tr:hover td{background:var(--bg-inner)}
 </style>
@@ -566,16 +566,16 @@ function toggleDetail(id){
 }
 
 function detailHtml(s,pos){
-  var h='<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">';
-  h+='<div><div style="font-size:15px;font-weight:700;color:var(--text-primary)">'+esc(s.name)+'</div>';
-  if(s.phone) h+='<div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Phone: '+esc(s.phone)+'</div>';
-  if(s.whatsapp) h+='<div style="font-size:11px;color:var(--text-tertiary)">WhatsApp: '+esc(s.whatsapp)+'</div>';
-  if(s.location) h+='<div style="font-size:11px;color:var(--text-tertiary)">Location: '+esc(s.location)+'</div>';
+  var h='<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">';
+  h+='<div><div style="font-size:18px;font-weight:700;color:var(--text-primary)">'+esc(s.name)+'</div>';
+  if(s.phone) h+='<div style="font-size:13px;color:var(--text-tertiary);margin-top:5px">Phone: '+esc(s.phone)+'</div>';
+  if(s.whatsapp) h+='<div style="font-size:13px;color:var(--text-tertiary);margin-top:3px">WhatsApp: '+esc(s.whatsapp)+'</div>';
+  if(s.location) h+='<div style="font-size:13px;color:var(--text-tertiary);margin-top:3px">Location: '+esc(s.location)+'</div>';
   h+='</div>';
-  h+='<a href="/supply-chain?supplier='+encodeURIComponent(s.id)+'" class="btn btn-ghost" style="font-size:11px">View POs &#8594;</a>';
+  h+='<a href="/supply-chain?supplier='+encodeURIComponent(s.id)+'" class="btn btn-ghost">View POs &#8594;</a>';
   h+='</div>';
-  if(!pos.length){ h+='<div style="color:#8b949e;font-size:12px">No purchase orders yet.</div>'; return h; }
-  h+='<div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">PO History ('+pos.length+')</div>';
+  if(!pos.length){ h+='<div style="color:#8b949e;font-size:13px">No purchase orders yet.</div>'; return h; }
+  h+='<div style="font-size:13px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">PO History ('+pos.length+')</div>';
   h+='<div class="tbl-wrap"><table class="po-hist-tbl">';
   h+='<thead><tr><th>PO ID</th><th>Product</th><th>Qty</th><th>Status</th><th>Stage</th><th>Due</th></tr></thead><tbody>';
   for(var i=0;i<pos.length;i++){
