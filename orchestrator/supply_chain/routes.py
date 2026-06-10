@@ -126,6 +126,83 @@ def api_delete_po(po_id):
         return jsonify({'error': str(e)}), 500
 
 
+@sc_bp.route('/api/sc/po/<po_id>/stock-received', methods=['POST'])
+@sc_login_required
+def api_stock_received(po_id):
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        result = models.receive_po_stock(po_id, data)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/api/sc/po/<po_id>/waiting-orders')
+@sc_login_required
+def api_waiting_orders(po_id):
+    try:
+        data = models.get_waiting_orders(po_id)
+        if data is None:
+            return jsonify({'error': 'PO not found'}), 404
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/api/sc/po/<po_id>/link-so', methods=['POST'])
+@sc_login_required
+def api_link_so(po_id):
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        so = (data.get('so_number') or '').strip()
+        if not so:
+            return jsonify({'error': 'so_number required'}), 400
+        models.link_so_to_po(po_id, so)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/api/sc/po/<po_id>/unlink-so', methods=['POST'])
+@sc_login_required
+def api_unlink_so(po_id):
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        so = (data.get('so_number') or '').strip()
+        if not so:
+            return jsonify({'error': 'so_number required'}), 400
+        models.unlink_so_from_po(po_id, so)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/supply-chain/suppliers')
+@sc_login_required
+def sc_suppliers_page():
+    return render_template_string(SC_SUPPLIERS_HTML)
+
+
+@sc_bp.route('/api/sc/suppliers/<int:supplier_id>')
+@sc_login_required
+def api_supplier_detail(supplier_id):
+    try:
+        data = models.get_supplier_detail(supplier_id)
+        if data is None:
+            return jsonify({'error': 'Supplier not found'}), 404
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/supply-chain/po/<po_id>/waiting-orders')
+@sc_login_required
+def sc_waiting_orders_page(po_id):
+    return render_template_string(SC_WAITING_ORDERS_HTML)
+
+
 # ── shared CSS (dark theme, matches the rest of the app) ─────────────────────
 
 SC_CSS = """
@@ -280,6 +357,466 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
           padding:8px 11px;font-size:11px;margin-bottom:12px;display:none}
 .form-err.show{display:block}
 """
+
+
+# ── Supplier Scoreboard page ─────────────────────────────────────────────────
+
+SC_SUPPLIERS_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winterfell — Suppliers</title>
+<style>""" + SC_CSS + """
+.sup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px;margin-bottom:1.5rem}
+.sup-card{background:#fff;border:0.5px solid var(--border);border-radius:12px;padding:1rem 1.25rem;cursor:pointer;transition:.2s}
+.sup-card:hover{border-color:var(--text-tertiary);box-shadow:0 2px 8px rgba(26,31,46,.07)}
+.sup-card.preferred{border-left:3px solid #1D9E75}
+.sup-card.blacklisted{border-left:3px solid #E24B4A;opacity:.75}
+.sup-name{font-size:14px;font-weight:600;color:var(--text-primary)}
+.sup-loc{font-size:11px;color:var(--text-tertiary);margin-bottom:10px}
+.sup-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px;min-height:20px}
+.sup-tag{font-size:10px;padding:2px 8px;border-radius:12px;background:#F1EFE8;color:#444441;border:0.5px solid #D3D1C7}
+.sup-score-row{display:flex;align-items:flex-end;gap:10px;margin-bottom:10px}
+.sup-score-num{font-size:28px;font-weight:700;line-height:1;color:var(--text-primary)}
+.sup-score-of{font-size:12px;color:var(--text-tertiary);margin-bottom:2px}
+.sup-score-bar-wrap{flex:1}
+.sup-score-lbl{font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.sup-score-bar{height:5px;border-radius:3px;background:var(--border)}
+.sup-score-fill{height:100%;border-radius:3px}
+.sup-stats{display:flex;gap:16px;margin-top:4px}
+.sup-stat .sv{font-size:13px;font-weight:600;color:var(--text-primary)}
+.sup-stat .sl{font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.sup-footer{display:flex;gap:6px;margin-top:12px;padding-top:10px;border-top:0.5px solid var(--border)}
+.preferred-badge{font-size:10px;padding:2px 8px;border-radius:12px;background:#E1F5EE;color:#085041;border:0.5px solid #5DCAA5}
+.blacklisted-badge{font-size:10px;padding:2px 8px;border-radius:12px;background:#FCEBEB;color:#791F1F;border:0.5px solid #F5C6C6}
+.active-po-badge{font-size:10px;padding:2px 8px;border-radius:12px;background:#EEEDFE;color:#3C3489;border:0.5px solid #7F77DD}
+
+/* detail slide-in panel */
+.sup-detail{display:none;background:#fff;border:0.5px solid var(--border);border-radius:12px;
+            padding:1.25rem;margin-bottom:1rem}
+.sup-detail.open{display:block}
+.po-hist-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.po-hist-tbl th{text-align:left;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;
+                 letter-spacing:.05em;padding:6px 8px;border-bottom:0.5px solid var(--border)}
+.po-hist-tbl td{padding:7px 8px;border-bottom:0.5px solid var(--border);color:var(--text-secondary)}
+.po-hist-tbl tr:last-child td{border-bottom:none}
+.po-hist-tbl tr:hover td{background:var(--bg-inner)}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#9876;&#65039; Winterfell Operations</h1>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link active">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
+    <a href="/logout" class="logout">Logout</a>
+    <button class="ham" onclick="document.getElementById('mnav-sup').classList.toggle('open')" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <nav class="mob-nav" id="mnav-sup">
+    <a href="/">Operations</a>
+    <a href="/products">Products</a>
+    <a href="/customers">Customers</a>
+    <a href="/orders">Orders</a>
+    <a href="/supply-chain" class="active">Supply Chain</a>
+    <a href="/logout">Logout</a>
+  </nav>
+</header>
+<div class="container">
+  <div class="page-head">
+    <div>
+      <div class="page-title">Supply Chain / Suppliers</div>
+      <div class="page-sub"><a href="/supply-chain" style="color:var(--teal);text-decoration:none;font-size:11px">&#8592; Back to POs</a></div>
+    </div>
+    <button class="btn btn-primary" onclick="openAddModal()">+ Add Supplier</button>
+  </div>
+
+  <div class="metrics" id="sup-metrics">
+    <div class="metric"><div class="val" id="m-total">&mdash;</div><div class="lbl">Total suppliers</div></div>
+    <div class="metric"><div class="val" id="m-preferred">&mdash;</div><div class="lbl">Preferred</div></div>
+    <div class="metric"><div class="val" id="m-ontime">&mdash;</div><div class="lbl">Avg on-time %</div></div>
+    <div class="metric"><div class="val" id="m-active-pos">&mdash;</div><div class="lbl">Active POs</div></div>
+  </div>
+
+  <div id="sup-detail-panel" class="sup-detail"></div>
+  <div id="sup-grid" class="sup-grid"><div class="empty">Loading suppliers&hellip;</div></div>
+</div>
+
+<!-- Add Supplier modal -->
+<div class="modal-bg" id="add-modal" onclick="if(event.target===this)closeAddModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Add Supplier</h3>
+      <button class="modal-close" onclick="closeAddModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-err" id="add-err"></div>
+      <div class="field"><label>Name *</label><input id="a-name" type="text" placeholder="e.g. MS Fashion"></div>
+      <div class="row2">
+        <div class="field"><label>Phone</label><input id="a-phone" type="text" placeholder="+880..."></div>
+        <div class="field"><label>WhatsApp</label><input id="a-wa" type="text" placeholder="+880..."></div>
+      </div>
+      <div class="field"><label>Location</label><input id="a-loc" type="text" placeholder="e.g. Mirpur, Dhaka"></div>
+      <div class="field"><label>Notes</label><textarea id="a-notes" placeholder="Speciality, payment terms&hellip;"></textarea></div>
+      <button class="btn btn-primary" style="width:100%" onclick="submitSupplier()">Add Supplier</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var openDetailId = null;
+
+function esc(s){
+  if(s==null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtBDT(n){
+  if(n==null||isNaN(n)) return '&#2547;0';
+  return '&#2547;' + Math.round(Number(n)).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');
+}
+function scoreColor(s){
+  var n = Number(s||0);
+  if(n>=7) return '#1D9E75';
+  if(n>=4) return '#BA7517';
+  return '#E24B4A';
+}
+
+function loadSuppliers(){
+  fetch('/api/sc/suppliers').then(function(r){return r.json();}).then(function(data){
+    if(data.error){ document.getElementById('sup-grid').innerHTML='<div class="empty">Error: '+esc(data.error)+'</div>'; return; }
+    var sups = Array.isArray(data) ? data : [];
+    renderMetrics(sups);
+    renderGrid(sups);
+  }).catch(function(e){
+    document.getElementById('sup-grid').innerHTML='<div class="empty">Failed to load.</div>';
+  });
+}
+
+function renderMetrics(sups){
+  document.getElementById('m-total').textContent = sups.length;
+  document.getElementById('m-preferred').textContent = sups.filter(function(s){return s.is_preferred;}).length;
+  var activePOs = sups.reduce(function(a,s){return a+(s.active_po_count||0);},0);
+  document.getElementById('m-active-pos').textContent = activePOs;
+  var withPos = sups.filter(function(s){return (s.total_pos||0)>0;});
+  if(withPos.length){
+    var avgOt = withPos.reduce(function(a,s){return a+(parseFloat(s.on_time_pct)||0);},0)/withPos.length;
+    document.getElementById('m-ontime').textContent = avgOt.toFixed(0)+'%';
+  } else {
+    document.getElementById('m-ontime').textContent = '—';
+  }
+}
+
+function renderGrid(sups){
+  if(!sups.length){ document.getElementById('sup-grid').innerHTML='<div class="empty">No suppliers yet. Add your first supplier.</div>'; return; }
+  var html='';
+  for(var i=0;i<sups.length;i++){
+    var s=sups[i];
+    var cls='sup-card'+(s.is_preferred?' preferred':'')+(s.is_blacklisted?' blacklisted':'');
+    var score=parseFloat(s.reliability_score||0);
+    var fillW=(score/10*100).toFixed(0);
+    var fillC=scoreColor(score);
+    var tags=(s.speciality||[]).map(function(t){return '<span class="sup-tag">'+esc(t)+'</span>';}).join('');
+    var onTimePct=parseFloat(s.on_time_pct||0).toFixed(0);
+    var activePOs=s.active_po_count||0;
+    var totalPOs=s.total_pos||0;
+    html+='<div class="'+cls+'" onclick="toggleDetail('+s.id+')">';
+    html+='<div class="sup-name">'+esc(s.name)+'</div>';
+    html+='<div class="sup-loc">'+(s.location?esc(s.location):'No location')+'</div>';
+    html+='<div class="sup-tags">'+(tags||'<span style="font-size:11px;color:var(--text-tertiary)">No tags</span>')+'</div>';
+    html+='<div class="sup-score-row">';
+    html+='<div><div class="sup-score-num" style="color:'+fillC+'">'+score.toFixed(1)+'</div></div>';
+    html+='<div class="sup-score-of">/10</div>';
+    html+='<div class="sup-score-bar-wrap">';
+    html+='<div class="sup-score-lbl">Reliability</div>';
+    html+='<div class="sup-score-bar"><div class="sup-score-fill" style="width:'+fillW+'%;background:'+fillC+'"></div></div>';
+    html+='</div></div>';
+    html+='<div class="sup-stats">';
+    html+='<div class="sup-stat"><div class="sv">'+onTimePct+'%</div><div class="sl">On time</div></div>';
+    html+='<div class="sup-stat"><div class="sv">'+totalPOs+'</div><div class="sl">Total POs</div></div>';
+    html+='<div class="sup-stat"><div class="sv">'+activePOs+'</div><div class="sl">Active</div></div>';
+    html+='</div>';
+    html+='<div class="sup-footer">';
+    if(s.is_preferred) html+='<span class="preferred-badge">&#9733; Preferred</span>';
+    if(s.is_blacklisted) html+='<span class="blacklisted-badge">&#9888; Blacklisted</span>';
+    if(activePOs>0) html+='<span class="active-po-badge">'+activePOs+' active PO'+(activePOs>1?'s':'')+'</span>';
+    html+='</div>';
+    html+='</div>';
+  }
+  document.getElementById('sup-grid').innerHTML=html;
+}
+
+function toggleDetail(id){
+  var panel=document.getElementById('sup-detail-panel');
+  if(openDetailId===id){ panel.classList.remove('open'); panel.innerHTML=''; openDetailId=null; return; }
+  openDetailId=id;
+  panel.classList.add('open');
+  panel.innerHTML='<div style="color:#8b949e;padding:14px 0">Loading&hellip;</div>';
+  fetch('/api/sc/suppliers/'+id).then(function(r){return r.json();}).then(function(data){
+    if(data.error){ panel.innerHTML='<div style="color:#F7C1C1">'+esc(data.error)+'</div>'; return; }
+    panel.innerHTML=detailHtml(data.supplier,data.pos||[]);
+    panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }).catch(function(e){ panel.innerHTML='<div style="color:#F7C1C1">Failed: '+esc(e.message)+'</div>'; });
+}
+
+function detailHtml(s,pos){
+  var h='<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">';
+  h+='<div><div style="font-size:15px;font-weight:700;color:var(--text-primary)">'+esc(s.name)+'</div>';
+  if(s.phone) h+='<div style="font-size:11px;color:var(--text-tertiary);margin-top:3px">Phone: '+esc(s.phone)+'</div>';
+  if(s.whatsapp) h+='<div style="font-size:11px;color:var(--text-tertiary)">WhatsApp: '+esc(s.whatsapp)+'</div>';
+  if(s.location) h+='<div style="font-size:11px;color:var(--text-tertiary)">Location: '+esc(s.location)+'</div>';
+  h+='</div>';
+  h+='<a href="/supply-chain?supplier='+encodeURIComponent(s.id)+'" class="btn btn-ghost" style="font-size:11px">View POs &#8594;</a>';
+  h+='</div>';
+  if(!pos.length){ h+='<div style="color:#8b949e;font-size:12px">No purchase orders yet.</div>'; return h; }
+  h+='<div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">PO History ('+pos.length+')</div>';
+  h+='<div class="tbl-wrap"><table class="po-hist-tbl">';
+  h+='<thead><tr><th>PO ID</th><th>Product</th><th>Qty</th><th>Status</th><th>Stage</th><th>Due</th></tr></thead><tbody>';
+  for(var i=0;i<pos.length;i++){
+    var p=pos[i];
+    var stCls=p.po_status==='Delayed'?'badge-delayed':p.po_status==='At Risk'?'badge-atrisk':'badge-ontrack';
+    h+='<tr>';
+    h+='<td><a href="/supply-chain/po/'+encodeURIComponent(p.po_id)+'" style="color:var(--purple);font-family:monospace">'+esc(p.po_id)+'</a></td>';
+    h+='<td>'+esc(p.product_name||'')+'</td>';
+    h+='<td>'+(p.quantity_ordered||0)+'</td>';
+    h+='<td><span class="badge '+stCls+'">'+esc(p.po_status||'')+'</span></td>';
+    h+='<td>'+esc(p.current_stage||'')+'</td>';
+    h+='<td>'+esc((p.due_date||'').substring(0,10))+'</td>';
+    h+='</tr>';
+  }
+  h+='</tbody></table></div>';
+  return h;
+}
+
+function openAddModal(){ document.getElementById('add-err').classList.remove('show'); document.getElementById('add-modal').classList.add('open'); }
+function closeAddModal(){ document.getElementById('add-modal').classList.remove('open'); }
+
+function submitSupplier(){
+  var err=document.getElementById('add-err');
+  err.classList.remove('show');
+  var name=document.getElementById('a-name').value.trim();
+  if(!name){ err.innerHTML='Name is required.'; err.classList.add('show'); return; }
+  var body={name:name,phone:document.getElementById('a-phone').value.trim(),
+            whatsapp:document.getElementById('a-wa').value.trim(),
+            location:document.getElementById('a-loc').value.trim(),
+            notes:document.getElementById('a-notes').value.trim()};
+  fetch('/api/sc/suppliers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(data){
+      if(data.error){ err.innerHTML=esc(data.error); err.classList.add('show'); return; }
+      closeAddModal();
+      document.getElementById('a-name').value='';
+      document.getElementById('a-phone').value='';
+      document.getElementById('a-wa').value='';
+      document.getElementById('a-loc').value='';
+      document.getElementById('a-notes').value='';
+      loadSuppliers();
+    }).catch(function(e){ err.innerHTML='Failed: '+esc(e.message); err.classList.add('show'); });
+}
+
+loadSuppliers();
+</script>
+</body>
+</html>"""
+
+
+# ── Waiting Orders page ───────────────────────────────────────────────────────
+
+SC_WAITING_ORDERS_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Winterfell — Waiting Orders</title>
+<style>""" + SC_CSS + """
+.wo-banner{background:#E1F5EE;border:0.5px solid #5DCAA5;border-radius:12px;
+           padding:1rem 1.25rem;display:flex;justify-content:space-between;
+           align-items:flex-start;gap:12px;margin-bottom:1.25rem}
+.wo-banner-left .ttl{font-size:13px;font-weight:600;color:#085041}
+.wo-banner-left .pname{font-size:18px;font-weight:700;color:#085041;margin-top:2px}
+.wo-banner-left .meta{font-size:11px;color:#1D9E75;margin-top:5px}
+.wo-banner-right{text-align:right;font-size:10px;color:#1D9E75;text-transform:uppercase;letter-spacing:.05em}
+.wo-banner-right .big{font-size:16px;font-weight:700;color:#085041;text-transform:none;letter-spacing:0;margin-top:3px}
+.wo-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.wo-tbl th{text-align:left;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;
+            letter-spacing:.05em;padding:8px 10px;border-bottom:0.5px solid var(--border);font-size:10px}
+.wo-tbl td{padding:9px 10px;border-bottom:0.5px solid var(--border);color:var(--text-secondary)}
+.wo-tbl tr:last-child td{border-bottom:none}
+.wo-tbl tr:hover td{background:var(--bg-inner)}
+.wait-urgent{color:#791F1F;font-weight:600}
+.wait-warn{color:#633806}
+.link-form{display:flex;gap:8px;margin-bottom:1rem}
+.link-form input{flex:1;background:var(--bg-inner);border:0.5px solid var(--border);
+                  border-radius:8px;padding:8px 11px;font-size:12px;font-family:Arial,sans-serif;color:var(--text-primary)}
+.link-form input:focus{outline:none;border-color:var(--purple)}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#9876;&#65039; Winterfell Operations</h1>
+  <nav class="top-nav">
+    <a href="/" class="nav-link">Operations</a>
+    <a href="/products" class="nav-link">Products</a>
+    <a href="/customers" class="nav-link">Customers</a>
+    <a href="/orders" class="nav-link">Orders</a>
+    <a href="/supply-chain" class="nav-link active">Supply Chain</a>
+  </nav>
+  <div class="hdr-actions">
+    <a href="/logout" class="logout">Logout</a>
+    <button class="ham" onclick="document.getElementById('mnav-wo').classList.toggle('open')" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  <nav class="mob-nav" id="mnav-wo">
+    <a href="/">Operations</a>
+    <a href="/products">Products</a>
+    <a href="/customers">Customers</a>
+    <a href="/orders">Orders</a>
+    <a href="/supply-chain" class="active">Supply Chain</a>
+    <a href="/logout">Logout</a>
+  </nav>
+</header>
+<div class="container">
+  <div class="crumb"><a href="/supply-chain">Supply Chain</a> / <span id="cr-po" class="mono">&hellip;</span> / <a id="cr-tl" href="#">Timeline</a> / Waiting Orders</div>
+
+  <div id="wo-banner" class="wo-banner"><div><div class="ttl">Loading&hellip;</div></div></div>
+
+  <div class="metrics" id="wo-metrics">
+    <div class="metric"><div class="val" id="wm-orders">&mdash;</div><div class="lbl">Orders waiting</div></div>
+    <div class="metric"><div class="val" id="wm-revenue">&mdash;</div><div class="lbl">Revenue held</div></div>
+    <div class="metric"><div class="val" id="wm-avg">&mdash;</div><div class="lbl">Avg days waiting</div></div>
+    <div class="metric"><div class="val" id="wm-urgent">&mdash;</div><div class="lbl">20+ day waiters</div></div>
+  </div>
+
+  <div class="tl" style="margin-bottom:1.25rem">
+    <div class="section-title">Link a waiting order</div>
+    <div class="link-form">
+      <input id="link-so" type="text" placeholder="Enter SO number (e.g. SO-12345)">
+      <button class="btn btn-primary" onclick="linkSO()">Link SO</button>
+    </div>
+    <div id="link-msg" style="font-size:11px;display:none"></div>
+  </div>
+
+  <div class="section-title">Linked waiting orders</div>
+  <div class="tl tbl-wrap" id="wo-table"><div style="color:#8b949e">Loading&hellip;</div></div>
+</div>
+
+<script>
+var POID = '';
+(function(){
+  var parts = window.location.pathname.split('/');
+  var idx = parts.indexOf('po');
+  if(idx>=0 && idx+1<parts.length) POID = decodeURIComponent(parts[idx+1]);
+})();
+
+function esc(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtBDT(n){
+  if(n==null||isNaN(n)) return '&#2547;0';
+  var v=Math.round(Number(n));
+  if(v>=100000) return '&#2547;'+(v/100000).toFixed(1)+'L';
+  return '&#2547;'+v.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g,',');
+}
+
+function loadData(){
+  document.getElementById('cr-po').textContent = POID;
+  document.getElementById('cr-tl').href = '/supply-chain/po/'+encodeURIComponent(POID);
+  fetch('/api/sc/po/'+encodeURIComponent(POID)+'/waiting-orders')
+    .then(function(r){return r.json();})
+    .then(function(data){
+      if(data.error){ document.getElementById('wo-banner').innerHTML='<div><div class="ttl">'+esc(data.error)+'</div></div>'; return; }
+      renderBanner(data.po);
+      renderMetrics(data);
+      renderTable(data.orders||[]);
+    }).catch(function(e){
+      document.getElementById('wo-banner').innerHTML='<div><div class="ttl">Failed: '+esc(e.message)+'</div></div>';
+    });
+}
+
+function renderBanner(po){
+  var h='<div class="wo-banner-left">';
+  h+='<div class="ttl"><span class="mono" style="font-size:12px">'+esc(po.po_id)+'</span></div>';
+  h+='<div class="pname">'+esc(po.product_name||'')+'</div>';
+  h+='<div class="meta">'+esc(po.sku||'')+(po.quantity_ordered?' &middot; '+po.quantity_ordered+' units ordered':'')+'</div>';
+  h+='</div>';
+  h+='<div class="wo-banner-right"><div>Units ordered</div><div class="big">'+(po.quantity_ordered||0)+'</div></div>';
+  document.getElementById('wo-banner').innerHTML=h;
+}
+
+function renderMetrics(data){
+  var orders=data.orders||[];
+  document.getElementById('wm-orders').textContent=orders.length;
+  document.getElementById('wm-revenue').innerHTML=fmtBDT(data.revenue_held||0);
+  var urgent=orders.filter(function(o){return (o.days_waiting||0)>=20;}).length;
+  document.getElementById('wm-urgent').textContent=urgent;
+  if(orders.length){
+    var avg=orders.reduce(function(a,o){return a+(o.days_waiting||0);},0)/orders.length;
+    document.getElementById('wm-avg').textContent=avg.toFixed(0)+' days';
+  } else {
+    document.getElementById('wm-avg').textContent='—';
+  }
+}
+
+function renderTable(orders){
+  var wrap=document.getElementById('wo-table');
+  if(!orders.length){
+    wrap.innerHTML='<div style="color:#8b949e;font-size:12px;padding:8px 0">No linked orders yet. Use the form above to link waiting SO numbers.</div>';
+    return;
+  }
+  var h='<table class="wo-tbl"><thead><tr>';
+  h+='<th>#</th><th>SO Number</th><th>Customer</th><th>Amount</th><th>Status</th><th>Waiting</th><th>Unlink</th>';
+  h+='</tr></thead><tbody>';
+  for(var i=0;i<orders.length;i++){
+    var o=orders[i];
+    var dw=o.days_waiting||0;
+    var wCls=dw>=20?'wait-urgent':dw>=12?'wait-warn':'';
+    h+='<tr>';
+    h+='<td>'+(i+1)+'</td>';
+    h+='<td><span class="mono" style="color:var(--purple)">'+esc(o.so_number)+'</span></td>';
+    h+='<td>'+esc(o.customer_name||'')+'</td>';
+    h+='<td>'+fmtBDT(o.total_receivable||0)+'</td>';
+    h+='<td>'+esc(o.nuport_status||o.payment_status||'')+'</td>';
+    h+='<td class="'+wCls+'">'+dw+' days</td>';
+    h+='<td><button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" onclick="unlinkSO(\\'' + esc(o.so_number) + '\\')">Unlink</button></td>';
+    h+='</tr>';
+  }
+  h+='</tbody></table>';
+  wrap.innerHTML=h;
+}
+
+function linkSO(){
+  var so=document.getElementById('link-so').value.trim();
+  var msg=document.getElementById('link-msg');
+  if(!so){ msg.style.display='block'; msg.style.color='#791F1F'; msg.textContent='Enter an SO number.'; return; }
+  fetch('/api/sc/po/'+encodeURIComponent(POID)+'/link-so',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({so_number:so})
+  }).then(function(r){return r.json();}).then(function(data){
+    if(data.error){ msg.style.display='block'; msg.style.color='#791F1F'; msg.textContent=data.error; return; }
+    msg.style.display='block'; msg.style.color='#085041'; msg.textContent=so+' linked.';
+    document.getElementById('link-so').value='';
+    setTimeout(function(){msg.style.display='none';},2000);
+    loadData();
+  }).catch(function(e){ msg.style.display='block'; msg.style.color='#791F1F'; msg.textContent='Failed: '+e.message; });
+}
+
+function unlinkSO(so){
+  if(!confirm('Unlink '+so+' from this PO?')) return;
+  fetch('/api/sc/po/'+encodeURIComponent(POID)+'/unlink-so',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({so_number:so})
+  }).then(function(r){return r.json();}).then(function(data){
+    if(data.error){ alert('Failed: '+data.error); return; }
+    loadData();
+  }).catch(function(e){ alert('Failed: '+e.message); });
+}
+
+loadData();
+</script>
+</body>
+</html>"""
 
 
 # ── PO list page ────────────────────────────────────────────────────────────
@@ -548,6 +1085,7 @@ function detailHtml(po, timeline){
   h += '</div>';
   h += '<div class="detail-actions">';
   h += '<a class="btn btn-ghost" href="/supply-chain/po/' + encodeURIComponent(po.po_id) + '">View Timeline &rarr;</a>';
+  h += '<a class="btn btn-ghost" href="/supply-chain/po/' + encodeURIComponent(po.po_id) + '/waiting-orders">Waiting Orders &rarr;</a>';
   h += '</div>';
   return h;
 }
@@ -831,8 +1369,14 @@ function renderBanner(po){
   h += '<div class="ttl"><span class="mono" style="color:#7F77DD">' + esc(po.po_id) + '</span></div>';
   h += '<div class="pname">' + esc(po.product_name || '') + '</div>';
   h += '<div class="meta">' + esc(po.supplier_name || 'No supplier') + ' &middot; ' + (po.quantity_ordered || 0) + ' pcs &middot; Due: ' + esc(arrive) + '</div>';
-  h += '<div style="display:flex;gap:8px;margin-top:12px">';
+  h += '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">';
   h += '<button class="btn btn-ghost" onclick="openEditModal()" style="font-size:12px">&#9998; Edit PO</button>';
+  h += '<a class="btn btn-ghost" href="/supply-chain/po/' + esc(po.po_id) + '/waiting-orders" style="font-size:12px">&#9201; Waiting Orders</a>';
+  if(po.po_status !== 'Completed' && po.po_status !== 'Cancelled'){
+    h += '<button class="btn btn-primary" onclick="openReceiveModal()" style="font-size:12px;background:#1D9E75">&#10003; Receive Stock</button>';
+  } else {
+    h += '<span style="font-size:11px;color:#1D9E75;padding:5px 0;align-self:center">&#10003; Completed '+(po.actual_delivery?po.actual_delivery.substring(0,10):'')+'</span>';
+  }
   h += '<button class="btn btn-danger" onclick="confirmDelete()" style="font-size:12px">&#128465; Delete</button>';
   h += '</div>';
   h += '</div>';
@@ -1050,6 +1594,34 @@ function confirmDelete(){
     }).catch(function(e){ alert('Delete failed: ' + e.message); });
 }
 
+function openReceiveModal(){
+  document.getElementById('r-units').value = '';
+  document.getElementById('r-rejected').value = '0';
+  document.getElementById('r-notes').value = '';
+  document.getElementById('recv-err').classList.remove('show');
+  document.getElementById('recv-modal').classList.add('open');
+}
+function closeReceiveModal(){ document.getElementById('recv-modal').classList.remove('open'); }
+function recvBgClick(e){ if(e.target === document.getElementById('recv-modal')) closeReceiveModal(); }
+
+function submitReceiveStock(){
+  var err = document.getElementById('recv-err');
+  err.classList.remove('show');
+  var units = document.getElementById('r-units').value.trim();
+  if(!units || Number(units) < 0){ err.innerHTML = 'Units received is required.'; err.classList.add('show'); return; }
+  var body = {
+    units_received: Number(units),
+    units_rejected: Number(document.getElementById('r-rejected').value.trim() || 0),
+    notes: document.getElementById('r-notes').value.trim()
+  };
+  fetch('/api/sc/po/' + encodeURIComponent(POID) + '/stock-received', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if(data.error){ err.innerHTML = esc(data.error); err.classList.add('show'); return; }
+    closeReceiveModal(); loadPo();
+  }).catch(function(e){ err.innerHTML = 'Failed: ' + esc(e.message); err.classList.add('show'); });
+}
+
 loadPo();
 </script>
 
@@ -1075,6 +1647,25 @@ loadPo();
       </div>
       <div class="field"><label>Notes</label><textarea id="e-notes" placeholder="Any notes for the team&hellip;"></textarea></div>
       <button class="btn btn-primary" style="width:100%" onclick="saveEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Receive Stock modal -->
+<div class="modal-bg" id="recv-modal" onclick="recvBgClick(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Receive Stock (GRN)</h3>
+      <button class="modal-close" onclick="closeReceiveModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-err" id="recv-err"></div>
+      <div class="row2">
+        <div class="field"><label>Units Received *</label><input id="r-units" type="number" min="0" placeholder="0"></div>
+        <div class="field"><label>Units Rejected</label><input id="r-rejected" type="number" min="0" value="0" placeholder="0"></div>
+      </div>
+      <div class="field"><label>Notes (optional)</label><textarea id="r-notes" placeholder="e.g. Minor quality issues in 5 pcs&hellip;"></textarea></div>
+      <button class="btn btn-primary" style="width:100%;background:#1D9E75" onclick="submitReceiveStock()">&#10003; Confirm Receipt</button>
     </div>
   </div>
 </div>

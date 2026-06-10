@@ -521,3 +521,237 @@ def delete_po(po_id):
         conn.execute(text("DELETE FROM po_timeline WHERE po_id = :po_id"), {'po_id': po_id})
         conn.execute(text("DELETE FROM purchase_orders WHERE po_id = :po_id"), {'po_id': po_id})
         conn.commit()
+
+
+def get_suppliers_with_stats():
+    """Return all suppliers with active PO count and last PO date."""
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT s.*,
+                   COUNT(po.po_id) FILTER (
+                       WHERE po.po_status NOT IN ('Completed','Cancelled')
+                   ) AS active_po_count,
+                   COUNT(po.po_id) FILTER (
+                       WHERE po.po_status = 'Completed'
+                   ) AS completed_po_count_actual
+            FROM suppliers s
+            LEFT JOIN purchase_orders po ON po.supplier_id = s.id
+            GROUP BY s.id
+            ORDER BY s.reliability_score DESC NULLS LAST, s.name ASC
+        """)).fetchall()
+    return _rows_to_list(rows)
+
+
+def get_supplier_detail(supplier_id):
+    """Return supplier dict plus full PO history, or None if not found."""
+    with get_connection() as conn:
+        sup_row = conn.execute(text(
+            "SELECT * FROM suppliers WHERE id = :id"
+        ), {'id': supplier_id}).fetchone()
+        if sup_row is None:
+            return None
+        po_rows = conn.execute(text("""
+            SELECT po.*,
+                   (SELECT COUNT(*) FROM po_timeline t WHERE t.po_id = po.po_id)
+                       AS event_count,
+                   (SELECT MAX(event_date) FROM po_timeline t WHERE t.po_id = po.po_id)
+                       AS last_update
+            FROM purchase_orders po
+            WHERE po.supplier_id = :sid
+            ORDER BY po.issued_date DESC
+        """), {'sid': supplier_id}).fetchall()
+    return {
+        'supplier': _row_to_dict(sup_row),
+        'pos': _rows_to_list(po_rows),
+    }
+
+
+def receive_po_stock(po_id, data):
+    """
+    Mark a PO as delivered and received at the warehouse.
+
+    Updates purchase_orders, skus.current_stock, suppliers stats,
+    and logs a Delivered timeline event.
+    Returns {success, event_id, new_status}.
+    """
+    try:
+        units_received = int(data.get('units_received') or 0)
+    except (TypeError, ValueError):
+        raise ValueError('Units received must be a number')
+    if units_received < 0:
+        raise ValueError('Units received cannot be negative')
+
+    try:
+        units_rejected = int(data.get('units_rejected') or 0)
+    except (TypeError, ValueError):
+        units_rejected = 0
+
+    notes = data.get('notes') or None
+    today = datetime.utcnow().date()
+
+    with get_connection() as conn:
+        po_row = conn.execute(text("""
+            SELECT po.*, s.id AS s_id
+            FROM purchase_orders po
+            LEFT JOIN suppliers s ON s.id = po.supplier_id
+            WHERE po.po_id = :po_id
+        """), {'po_id': po_id}).fetchone()
+        if po_row is None:
+            raise ValueError('PO not found: ' + str(po_id))
+
+        po = _row_to_dict(po_row)
+        due_date_raw = po.get('due_date')
+        on_time = True
+        if due_date_raw:
+            try:
+                due = date.fromisoformat(str(due_date_raw)[:10])
+                on_time = today <= due
+            except Exception:
+                pass
+
+        conn.execute(text("""
+            UPDATE purchase_orders SET
+                quantity_received    = :qr,
+                quantity_rejected    = :qrej,
+                actual_delivery      = :today,
+                current_stage        = 'Delivered',
+                stage_completion_pct = 100,
+                po_status            = 'Completed',
+                updated_at           = NOW()
+            WHERE po_id = :po_id
+        """), {
+            'qr': units_received, 'qrej': units_rejected,
+            'today': today.isoformat(), 'po_id': po_id,
+        })
+
+        tl_id = next_tl_id(conn)
+        ev_note = str(units_received) + ' units received'
+        if units_rejected > 0:
+            ev_note += ', ' + str(units_rejected) + ' rejected'
+        if notes:
+            ev_note += '. ' + notes
+
+        conn.execute(text("""
+            INSERT INTO po_timeline (
+                event_id, po_id, stage, event_title, event_note,
+                source_type, logged_by
+            ) VALUES (
+                :eid, :po_id, 'Delivered', 'Stock received at warehouse', :note,
+                'pm', 'Warehouse (GRN)'
+            )
+        """), {'eid': tl_id, 'po_id': po_id, 'note': ev_note})
+
+        # Update skus.current_stock for the PO's linked SKU
+        sku = po.get('sku')
+        net_received = max(0, units_received - units_rejected)
+        if sku and net_received > 0:
+            conn.execute(text("""
+                UPDATE skus
+                SET current_stock = current_stock + :qty, updated_at = NOW()
+                WHERE sku = :sku
+            """), {'qty': net_received, 'sku': sku})
+
+        # Update supplier reliability stats
+        supplier_id = po.get('supplier_id') or po.get('s_id')
+        if supplier_id:
+            if on_time:
+                conn.execute(text("""
+                    UPDATE suppliers SET
+                        on_time_count  = on_time_count + 1,
+                        completed_pos  = completed_pos + 1,
+                        total_pos      = total_pos + 1,
+                        last_po_date   = :today,
+                        updated_at     = NOW()
+                    WHERE id = :sid
+                """), {'today': today.isoformat(), 'sid': supplier_id})
+            else:
+                conn.execute(text("""
+                    UPDATE suppliers SET
+                        delayed_count  = delayed_count + 1,
+                        completed_pos  = completed_pos + 1,
+                        total_pos      = total_pos + 1,
+                        last_po_date   = :today,
+                        updated_at     = NOW()
+                    WHERE id = :sid
+                """), {'today': today.isoformat(), 'sid': supplier_id})
+
+            conn.execute(text("""
+                UPDATE suppliers SET
+                    reliability_score = ROUND(
+                        LEAST(10.00, GREATEST(0.00,
+                            (on_time_count::numeric / NULLIF(total_pos,0)) * 10 * 0.7
+                            + GREATEST(0,
+                                10 - (quality_issue_count::numeric / NULLIF(total_pos,0)) * 10
+                              ) * 0.3
+                        )), 2),
+                    updated_at = NOW()
+                WHERE id = :sid
+            """), {'sid': supplier_id})
+
+        conn.commit()
+
+    return {'success': True, 'event_id': tl_id, 'new_status': 'Completed'}
+
+
+def get_waiting_orders(po_id):
+    """
+    Return orders linked to this PO via linked_so_numbers.
+    Also returns a summary of units needed vs arriving.
+    """
+    with get_connection() as conn:
+        po_row = conn.execute(text("""
+            SELECT po_id, product_name, sku, quantity_ordered,
+                   quantity_received, linked_so_numbers
+            FROM purchase_orders WHERE po_id = :po_id
+        """), {'po_id': po_id}).fetchone()
+        if po_row is None:
+            return None
+        po = _row_to_dict(po_row)
+
+        linked = po.get('linked_so_numbers') or []
+        orders = []
+        if linked:
+            rows = conn.execute(text("""
+                SELECT so_number, customer_name, customer_phone,
+                       total_receivable, nuport_status, payment_status,
+                       order_date,
+                       EXTRACT(DAY FROM NOW() - order_date)::INTEGER AS days_waiting
+                FROM orders
+                WHERE so_number = ANY(:so_list)
+                ORDER BY order_date ASC
+            """), {'so_list': linked}).fetchall()
+            orders = _rows_to_list(rows)
+
+    return {
+        'po': po,
+        'orders': orders,
+        'order_count': len(orders),
+        'revenue_held': sum((o.get('total_receivable') or 0) for o in orders),
+    }
+
+
+def link_so_to_po(po_id, so_number):
+    """Append a SO number to a PO's linked_so_numbers array."""
+    with get_connection() as conn:
+        conn.execute(text("""
+            UPDATE purchase_orders
+            SET linked_so_numbers = array_append(
+                    COALESCE(linked_so_numbers, ARRAY[]::TEXT[]), :so),
+                updated_at = NOW()
+            WHERE po_id = :po_id
+              AND NOT (:so = ANY(COALESCE(linked_so_numbers, ARRAY[]::TEXT[])))
+        """), {'so': so_number, 'po_id': po_id})
+        conn.commit()
+
+
+def unlink_so_from_po(po_id, so_number):
+    """Remove a SO number from a PO's linked_so_numbers array."""
+    with get_connection() as conn:
+        conn.execute(text("""
+            UPDATE purchase_orders
+            SET linked_so_numbers = array_remove(
+                    COALESCE(linked_so_numbers, ARRAY[]::TEXT[]), :so),
+                updated_at = NOW()
+            WHERE po_id = :po_id
+        """), {'so': so_number, 'po_id': po_id})
+        conn.commit()
