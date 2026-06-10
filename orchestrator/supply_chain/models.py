@@ -39,9 +39,9 @@ SIZE_ORDER = {
 
 # Default manufacturing lead time (days) used by the Brain quantity recommender.
 # Overridable per supplier via suppliers.avg_lead_days, or per request.
-DEFAULT_LEAD_TIME_DAYS = 20
-BUFFER_DAYS = 7      # safety buffer added on top of lead time
-MIN_PER_SIZE = 5     # supplier MOQ floor per size (only when the size sells)
+DEFAULT_LEAD_TIME_DAYS = 15   # typical production time
+BUFFER_DAYS = 5               # safety buffer added on top of lead time
+MIN_PER_SIZE = 5              # supplier MOQ floor per size (only when the size sells)
 
 # Same regex used by the Products module to strip size suffixes and group SKUs
 # into a single "product" (e.g. "Classic Tee - M" → "Classic Tee").
