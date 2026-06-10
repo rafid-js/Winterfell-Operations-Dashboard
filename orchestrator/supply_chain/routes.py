@@ -41,7 +41,7 @@ def api_pos():
 @sc_login_required
 def api_suppliers():
     try:
-        return jsonify(models.get_suppliers())
+        return jsonify(models.get_suppliers_with_stats())
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

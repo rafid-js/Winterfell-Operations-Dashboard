@@ -524,16 +524,17 @@ def delete_po(po_id):
 
 
 def get_suppliers_with_stats():
-    """Return all suppliers with active PO count and last PO date."""
+    """Return all suppliers with active PO count, completed count, and on_time_pct."""
     with get_connection() as conn:
         rows = conn.execute(text("""
             SELECT s.*,
                    COUNT(po.po_id) FILTER (
                        WHERE po.po_status NOT IN ('Completed','Cancelled')
                    ) AS active_po_count,
-                   COUNT(po.po_id) FILTER (
-                       WHERE po.po_status = 'Completed'
-                   ) AS completed_po_count_actual
+                   CASE WHEN s.total_pos > 0
+                        THEN ROUND(s.on_time_count::numeric / s.total_pos * 100, 1)
+                        ELSE 0
+                   END AS on_time_pct
             FROM suppliers s
             LEFT JOIN purchase_orders po ON po.supplier_id = s.id
             GROUP BY s.id
