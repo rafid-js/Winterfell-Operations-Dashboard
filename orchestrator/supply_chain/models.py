@@ -923,7 +923,9 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
         """), {'skus': skus}).fetchall()
         sales_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in sales_rows}
 
-        # Waiting orders — active but not yet fulfilled or cancelled.
+        # Waiting orders — truly pending/on-hold only.
+        # Exclude: delivered, completed, cancelled, returned, refunded,
+        #          in-transit, and shipped (already on their way).
         wait_rows = conn.execute(text("""
             SELECT oi.sku, COALESCE(SUM(oi.quantity), 0) AS qty
             FROM order_items oi
@@ -934,6 +936,8 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
               AND COALESCE(o.nuport_status, '') NOT ILIKE '%cancel%'
               AND COALESCE(o.nuport_status, '') NOT ILIKE '%return%'
               AND COALESCE(o.nuport_status, '') NOT ILIKE '%refund%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%transit%'
+              AND COALESCE(o.nuport_status, '') NOT ILIKE '%ship%'
             GROUP BY oi.sku
         """), {'skus': skus}).fetchall()
         wait_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in wait_rows}
