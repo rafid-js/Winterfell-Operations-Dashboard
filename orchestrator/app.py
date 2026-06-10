@@ -34,6 +34,11 @@ from db import get_connection
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'wf-secret-2024-xk9')
 
+# ── Supply Chain blueprint ──────────────────────────────────────────────────
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from supply_chain import sc_bp
+app.register_blueprint(sc_bp)
+
 DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'winterfell')
 
 # Maps script_name → cron module path
@@ -571,6 +576,7 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc}
       <a href="/products" class="nav-link">Products</a>
       <a href="/customers" class="nav-link">Customers</a>
       <a href="/orders" class="nav-link">Orders</a>
+      <a href="/supply-chain" class="nav-link">Supply Chain</a>
     </nav>
     <span id="server-time">—</span>
     <a href="/logout" class="logout">Logout</a>
@@ -871,6 +877,7 @@ td.rev{color:#e6edf3}
       <a href="/products" class="nav-link active">Products</a>
       <a href="/customers" class="nav-link">Customers</a>
       <a href="/orders" class="nav-link">Orders</a>
+      <a href="/supply-chain" class="nav-link">Supply Chain</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
   </div>
@@ -1304,6 +1311,7 @@ td.rev{color:#e6edf3}
       <a href="/products" class="nav-link">Products</a>
       <a href="/customers" class="nav-link active">Customers</a>
       <a href="/orders" class="nav-link">Orders</a>
+      <a href="/supply-chain" class="nav-link">Supply Chain</a>
     </nav>
     <a href="/logout" class="logout">Logout</a>
   </div>
@@ -1704,6 +1712,7 @@ tbody td.r{text-align:right;white-space:nowrap}
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link active">Orders</a>
+    <a href="/supply-chain" class="nav-link">Supply Chain</a>
   </nav>
   <a href="/logout" class="logout">Logout</a>
 </header>
