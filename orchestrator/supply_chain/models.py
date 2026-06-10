@@ -38,7 +38,10 @@ SIZE_ORDER = {
 }
 
 # Default manufacturing lead time (days) used by the Brain quantity recommender.
-DEFAULT_LEAD_TIME_DAYS = 30
+# Overridable per supplier via suppliers.avg_lead_days, or per request.
+DEFAULT_LEAD_TIME_DAYS = 20
+BUFFER_DAYS = 7      # safety buffer added on top of lead time
+MIN_PER_SIZE = 5     # supplier MOQ floor per size (only when the size sells)
 
 # Same regex used by the Products module to strip size suffixes and group SKUs
 # into a single "product" (e.g. "Classic Tee - M" → "Classic Tee").
@@ -947,21 +950,27 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
 
     total_sales = sum(sales)
     total_stock = sum(stock)
-    daily = (total_sales / 30.0) if total_sales else 0.0
-    recommended_total = math.ceil((daily * lead) - total_stock + (daily * 5))
-    if recommended_total < 0:
-        recommended_total = 0
 
+    # ── Part 18: per-size independent deficit calculation ───────────────────
+    # Each size is sized on its OWN demand vs stock; total is the RESULT.
+    coverage_days = lead + BUFFER_DAYS
     auto_qty = []
-    if total_sales > 0 and recommended_total > 0:
-        for s in sales:
-            auto_qty.append(int(math.ceil(s / total_sales * recommended_total)))
-    else:
-        n = len(sizes)
-        base = recommended_total // n if n else 0
-        auto_qty = [base for _ in sizes]
-        if n and recommended_total - base * n > 0:
-            auto_qty[0] += recommended_total - base * n
+    net_need = []
+    daily_velocity = []
+    for i in range(len(sizes)):
+        s30 = sales[i]
+        daily = s30 / 30.0
+        daily_velocity.append(round(daily, 2))
+        demand = math.ceil(daily * coverage_days)
+        need = max(0, demand - stock[i])
+        net_need.append(need)
+
+        order_qty = need + waiting[i]
+        if s30 > 0 and order_qty < MIN_PER_SIZE:
+            order_qty = MIN_PER_SIZE      # MOQ floor for live sizes
+        if s30 == 0:
+            order_qty = 0                 # never order a dead size
+        auto_qty.append(int(order_qty))
 
     unit_cost = round(sum(cost_vals) / len(cost_vals), 2) if cost_vals else 0.0
     sku_base = _common_sku_prefix(skus)
@@ -970,15 +979,21 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
         'sku_base': sku_base,
         'product_name': pname,
         'lead_time_days': lead,
+        'buffer_days': BUFFER_DAYS,
+        'min_per_size': MIN_PER_SIZE,
+        'coverage_days': coverage_days,
         'unit_cost_bdt': unit_cost,
         'sizes': sizes,
+        'skus': skus,
         'auto_qty': auto_qty,
+        'net_need': net_need,
+        'daily_velocity': daily_velocity,
         'current_stock': stock,
         'sales_30d': sales,
         'waiting_orders': waiting,
         'total_auto': sum(auto_qty),
         'total_30d_sales': total_sales,
-        'skus': skus,
+        'total_stock': total_stock,
     }
 
 
