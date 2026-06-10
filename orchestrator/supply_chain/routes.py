@@ -72,6 +72,30 @@ def api_create_po():
         return jsonify({'error': str(e)}), 500
 
 
+@sc_bp.route('/api/sc/products/search')
+@sc_login_required
+def api_products_search():
+    try:
+        q = request.args.get('q', '')
+        return jsonify(models.search_products(q))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@sc_bp.route('/api/sc/product-matrix')
+@sc_login_required
+def api_product_matrix():
+    try:
+        product_name = request.args.get('product_name', '')
+        color = request.args.get('color')
+        lead = request.args.get('lead_time_days')
+        return jsonify(models.get_product_matrix(product_name, color, lead))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @sc_bp.route('/api/sc/po/<po_id>')
 @sc_login_required
 def api_po_detail(po_id):
@@ -827,7 +851,58 @@ SC_LIST_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Winterfell — Supply Chain</title>
-<style>""" + SC_CSS + """</style>
+<style>""" + SC_CSS + """
+/* New PO modal: wider to fit the size matrix */
+#modal .modal{width:min(760px,96vw)}
+
+/* product picker */
+.picker-results{position:absolute;left:0;right:0;top:100%;z-index:30;background:#fff;
+  border:0.5px solid var(--border);border-radius:8px;margin-top:4px;max-height:260px;
+  overflow-y:auto;box-shadow:0 8px 24px rgba(26,31,46,.12);display:none}
+.picker-results.open{display:block}
+.picker-item{padding:10px 12px;cursor:pointer;border-bottom:0.5px solid var(--border)}
+.picker-item:last-child{border-bottom:none}
+.picker-item:hover,.picker-item.hi{background:var(--bg-inner)}
+.picker-item .pi-name{font-size:13px;font-weight:600;color:var(--text-primary)}
+.picker-item .pi-meta{font-size:11px;color:var(--text-tertiary);margin-top:2px}
+.picker-empty{padding:12px;font-size:12px;color:var(--text-tertiary)}
+
+.sel-prod{background:var(--bg-inner);border:0.5px solid var(--border);border-radius:8px;
+  padding:10px 12px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sel-prod .sp-name{font-size:14px;font-weight:600;color:var(--text-primary)}
+.sel-prod .sp-meta{font-size:12px;color:var(--text-tertiary);margin-top:2px}
+.sel-prod .sp-change{font-size:12px;color:var(--purple);cursor:pointer;background:none;border:none;white-space:nowrap}
+
+/* size matrix */
+.mtx{border:0.5px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px;background:#fff}
+.mtx-total-row{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.mtx-total-row .mtx-total-field{flex:0 0 auto}
+.qty-total{width:130px;border-radius:8px;padding:9px 11px;font-size:15px;font-weight:600;
+  border:1.5px solid var(--border);font-family:Arial,sans-serif}
+.qty-total:focus{outline:none}
+.mtx-cost{margin-left:auto;text-align:right}
+.mtx-cost .mc-val{font-size:16px;font-weight:700;color:var(--text-primary)}
+#mtx-reset{font-size:12px;padding:7px 12px}
+.mtx-grid{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.mtx-col{flex:1 1 0;min-width:74px;text-align:center}
+.mtx-size{font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:6px}
+.mtx-qty{width:100%;text-align:center;border-radius:8px;padding:9px 4px;font-size:15px;font-weight:600;
+  border:1.5px solid var(--border);font-family:Arial,sans-serif}
+.mtx-qty:focus{outline:none;box-shadow:0 0 0 3px rgba(127,119,221,.18)}
+.mtx-pct{font-size:12px;color:var(--text-secondary);margin-top:6px;font-weight:600}
+.mtx-ctx{font-size:10px;color:var(--text-tertiary);margin-top:4px;line-height:1.4}
+/* colour states */
+.state-auto{background:#E1F5EE;border-color:#5DCAA5;color:#085041}
+.state-manual{background:#EEEDFE;border-color:#7F77DD;color:#3C3489}
+.state-dist{background:#FAEEDA;border-color:#EF9F27;color:#633806}
+.mtx-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--text-tertiary)}
+.mtx-legend span{display:inline-flex;align-items:center;gap:5px}
+.mtx-legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+.dist-banner{border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;line-height:1.5}
+.dist-banner.amber{background:#FAEEDA;border:0.5px solid #EF9F27;color:#633806}
+.dist-banner.warn{background:#FCEBEB;border:0.5px solid #F09595;color:#791F1F}
+</style>
 </head>
 <body>
 <header>
@@ -892,31 +967,42 @@ SC_LIST_HTML = """<!doctype html>
     </div>
     <div class="modal-body">
       <div class="form-err" id="form-err"></div>
-      <div class="field">
-        <label>Product Name *</label>
-        <input id="f-product" type="text" placeholder="e.g. Winter Hoodie - Charcoal">
+
+      <!-- Product picker -->
+      <div class="field" id="picker-field" style="position:relative">
+        <label>Product *</label>
+        <input id="f-product-search" type="text" autocomplete="off"
+               placeholder="Search products by name, colour or SKU&hellip;"
+               oninput="onProductSearch()" onfocus="onProductSearch()"
+               onkeydown="onPickerKey(event)">
+        <input id="f-product" type="hidden">
+        <input id="f-color" type="hidden">
+        <input id="f-sku" type="hidden">
+        <div id="product-results" class="picker-results"></div>
       </div>
-      <div class="field">
-        <label>SKU (optional)</label>
-        <input id="f-sku" type="text" placeholder="e.g. HOOD-CHAR-M">
-      </div>
+
+      <!-- Selected product summary -->
+      <div id="selected-product" class="sel-prod" style="display:none"></div>
+
+      <!-- Size matrix -->
+      <div id="size-matrix" style="display:none"></div>
+
+      <!-- Redistribution / validation banner -->
+      <div id="dist-banner" class="dist-banner amber" style="display:none"></div>
+
       <div class="field">
         <label>Supplier</label>
         <input id="f-supplier" type="text" placeholder="Existing name links, new name creates">
       </div>
       <div class="row2">
         <div class="field">
-          <label>Quantity *</label>
-          <input id="f-qty" type="number" min="1" placeholder="0">
+          <label>Unit Cost (BDT)</label>
+          <input id="f-cost" type="number" min="0" step="0.01" placeholder="0" oninput="onCostInput()">
         </div>
         <div class="field">
-          <label>Unit Cost (BDT)</label>
-          <input id="f-cost" type="number" min="0" step="0.01" placeholder="0">
+          <label>Due Date *</label>
+          <input id="f-due" type="date">
         </div>
-      </div>
-      <div class="field">
-        <label>Due Date *</label>
-        <input id="f-due" type="date">
       </div>
       <div class="field">
         <label>Notes</label>
@@ -1101,27 +1187,346 @@ function setFilter(el){
   loadPos();
 }
 
-function openModal(){ document.getElementById('modal').classList.add('open'); }
+function openModal(){ document.getElementById('modal').classList.add('open'); resetModal(); }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); document.getElementById('form-err').classList.remove('show'); }
 function modalBgClick(e){ if(e.target === document.getElementById('modal')){ closeModal(); } }
+
+/* ── product matrix state ──────────────────────────────────────────────────
+   PMX = {
+     product_name, color, sku_base, unit_cost,
+     sizes:[], auto_qty:[], current_qty:[], size_state:[],   // 'auto'|'manual'|'dist'
+     current_stock:[], sales_30d:[], waiting_orders:[],
+     total_auto, total_current, total_state                  // 'auto'|'manual'|'redistributed'
+   }
+*/
+var PMX = null;
+var pmxSearchTimer = null;
+var pmxResults = [];
+var pmxHi = -1;
+
+function resetModal(){
+  PMX = null; pmxResults = []; pmxHi = -1;
+  document.getElementById('f-product-search').value = '';
+  document.getElementById('f-product').value = '';
+  document.getElementById('f-color').value = '';
+  document.getElementById('f-sku').value = '';
+  document.getElementById('f-supplier').value = '';
+  document.getElementById('f-cost').value = '';
+  document.getElementById('f-due').value = '';
+  document.getElementById('f-notes').value = '';
+  document.getElementById('product-results').classList.remove('open');
+  document.getElementById('selected-product').style.display = 'none';
+  document.getElementById('size-matrix').style.display = 'none';
+  document.getElementById('size-matrix').innerHTML = '';
+  document.getElementById('dist-banner').style.display = 'none';
+  document.getElementById('picker-field').style.display = '';
+}
+
+/* ── product search picker ──────────────────────────────────────────────── */
+function onProductSearch(){
+  var q = document.getElementById('f-product-search').value.trim();
+  if(pmxSearchTimer) clearTimeout(pmxSearchTimer);
+  pmxSearchTimer = setTimeout(function(){ doProductSearch(q); }, 220);
+}
+
+function doProductSearch(q){
+  fetch('/api/sc/products/search?q=' + encodeURIComponent(q))
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      pmxResults = Array.isArray(data) ? data : [];
+      pmxHi = -1;
+      renderPickerResults();
+    }).catch(function(){ pmxResults = []; renderPickerResults(); });
+}
+
+function renderPickerResults(){
+  var box = document.getElementById('product-results');
+  if(!pmxResults.length){
+    box.innerHTML = '<div class="picker-empty">No matching products.</div>';
+    box.classList.add('open');
+    return;
+  }
+  var h = '';
+  for(var i=0; i<pmxResults.length; i++){
+    var p = pmxResults[i];
+    var nm = p.product_name + (p.color ? ' &middot; ' + p.color : '');
+    var meta = p.variant_count + ' size' + (p.variant_count>1?'s':'')
+             + ' &middot; ' + (p.total_stock||0) + ' in stock';
+    h += '<div class="picker-item' + (i===pmxHi?' hi':'') + '" '
+       + 'onclick="pickProduct(' + i + ')">'
+       + '<div class="pi-name">' + esc(nm) + '</div>'
+       + '<div class="pi-meta">' + meta + '</div></div>';
+  }
+  box.innerHTML = h;
+  box.classList.add('open');
+}
+
+function onPickerKey(e){
+  var box = document.getElementById('product-results');
+  if(!box.classList.contains('open') || !pmxResults.length) return;
+  if(e.key === 'ArrowDown'){ e.preventDefault(); pmxHi = Math.min(pmxHi+1, pmxResults.length-1); renderPickerResults(); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); pmxHi = Math.max(pmxHi-1, 0); renderPickerResults(); }
+  else if(e.key === 'Enter'){ e.preventDefault(); if(pmxHi>=0) pickProduct(pmxHi); }
+  else if(e.key === 'Escape'){ box.classList.remove('open'); }
+}
+
+function pickProduct(i){
+  var p = pmxResults[i];
+  if(!p) return;
+  document.getElementById('product-results').classList.remove('open');
+  var matrixBox = document.getElementById('size-matrix');
+  matrixBox.style.display = 'block';
+  matrixBox.innerHTML = '<div style="color:#8b949e;font-size:12px;padding:8px 0">Loading Brain recommendation&hellip;</div>';
+  var url = '/api/sc/product-matrix?product_name=' + encodeURIComponent(p.product_name)
+          + (p.color ? '&color=' + encodeURIComponent(p.color) : '');
+  fetch(url).then(function(r){ return r.json(); }).then(function(data){
+    if(data.error){ matrixBox.innerHTML = '<div class="picker-empty">' + esc(data.error) + '</div>'; return; }
+    initPMX(data);
+  }).catch(function(e){ matrixBox.innerHTML = '<div class="picker-empty">Failed: ' + esc(e.message) + '</div>'; });
+}
+
+function initPMX(d){
+  PMX = {
+    product_name: d.product_name, color: d.color || '', sku_base: d.sku_base || '',
+    unit_cost: Number(d.unit_cost_bdt || 0),
+    sizes: d.sizes || [],
+    auto_qty: (d.auto_qty || []).slice(),
+    current_qty: (d.auto_qty || []).slice(),
+    size_state: (d.sizes || []).map(function(){ return 'auto'; }),
+    current_stock: d.current_stock || [],
+    sales_30d: d.sales_30d || [],
+    waiting_orders: d.waiting_orders || [],
+    total_auto: d.total_auto || 0,
+    total_current: d.total_auto || 0,
+    total_state: 'auto'
+  };
+  // hidden fields used on submit
+  document.getElementById('f-product').value = PMX.product_name;
+  document.getElementById('f-color').value = PMX.color;
+  document.getElementById('f-sku').value = PMX.sku_base;
+  // prefill unit cost only if empty
+  var costEl = document.getElementById('f-cost');
+  if(!costEl.value && PMX.unit_cost) costEl.value = PMX.unit_cost;
+
+  // selected-product summary + hide search field
+  var sp = document.getElementById('selected-product');
+  sp.style.display = 'flex';
+  sp.innerHTML = '<div><div class="sp-name">' + esc(PMX.product_name)
+    + (PMX.color ? ' &middot; ' + esc(PMX.color) : '') + '</div>'
+    + '<div class="sp-meta">' + PMX.sizes.length + ' sizes &middot; Brain suggests '
+    + PMX.total_auto + ' pcs (' + (d.total_30d_sales || 0) + ' sold in 30d)</div></div>'
+    + '<button class="sp-change" onclick="changeProduct()">Change</button>';
+  document.getElementById('picker-field').style.display = 'none';
+
+  renderMatrix();
+}
+
+function changeProduct(){
+  PMX = null;
+  document.getElementById('selected-product').style.display = 'none';
+  document.getElementById('size-matrix').style.display = 'none';
+  document.getElementById('size-matrix').innerHTML = '';
+  document.getElementById('dist-banner').style.display = 'none';
+  document.getElementById('picker-field').style.display = '';
+  document.getElementById('f-product').value = '';
+  document.getElementById('f-product-search').value = '';
+  document.getElementById('f-product-search').focus();
+}
+
+/* ── matrix render ─────────────────────────────────────────────────────────*/
+function renderMatrix(){
+  var resetLbl = 'Reset to ' + PMX.total_auto;
+  var h = '<div class="mtx">';
+  h += '<div class="mtx-total-row">';
+  h += '<div class="mtx-total-field"><span class="flabel">Total quantity</span>'
+     + '<input id="mtx-total" class="qty-total state-' + tstateCls() + '" type="number" min="1" step="1" '
+     + 'value="' + PMX.total_current + '" oninput="onTotalInput()" onkeydown="onTotalKey(event)"></div>';
+  h += '<button class="btn btn-ghost" id="mtx-reset" onclick="resetToBrain()">' + esc(resetLbl) + '</button>';
+  h += '<div class="mtx-cost"><span class="flabel">Order cost</span>'
+     + '<div class="mc-val" id="mtx-cost-val">' + fmtBDT(orderCost()) + '</div></div>';
+  h += '</div>';
+
+  h += '<div class="mtx-grid" id="mtx-grid">';
+  for(var i=0; i<PMX.sizes.length; i++){
+    h += '<div class="mtx-col">';
+    h += '<div class="mtx-size">' + esc(PMX.sizes[i]) + '</div>';
+    h += '<input class="mtx-qty state-' + PMX.size_state[i] + '" id="mq-' + i + '" data-i="' + i + '" '
+       + 'type="number" min="0" step="1" value="' + PMX.current_qty[i] + '" '
+       + 'oninput="onSizeInput(' + i + ')"></div>';
+  }
+  h += '</div>';
+
+  h += '<div class="mtx-grid" id="mtx-pct-row" style="overflow:visible">';
+  for(var j=0; j<PMX.sizes.length; j++){
+    h += '<div class="mtx-col">';
+    h += '<div class="mtx-pct" id="pct-' + j + '">' + pct(j) + '</div>';
+    h += '<div class="mtx-ctx">stk ' + (PMX.current_stock[j]||0)
+       + '<br>30d ' + (PMX.sales_30d[j]||0)
+       + '<br>wait ' + (PMX.waiting_orders[j]||0) + '</div>';
+    h += '</div>';
+  }
+  h += '</div>';
+
+  h += '<div class="mtx-legend">'
+     + '<span><i style="background:#5DCAA5"></i> Brain auto</span>'
+     + '<span><i style="background:#7F77DD"></i> Manual</span>'
+     + '<span><i style="background:#EF9F27"></i> Redistributed</span></div>';
+  h += '</div>';
+  document.getElementById('size-matrix').innerHTML = h;
+  refreshBanner();
+}
+
+function tstateCls(){
+  if(PMX.total_state === 'redistributed') return 'dist';
+  if(PMX.total_state === 'manual') return 'manual';
+  return 'auto';
+}
+function orderCost(){
+  var c = Number(document.getElementById('f-cost') ? document.getElementById('f-cost').value : PMX.unit_cost) || PMX.unit_cost || 0;
+  return c * PMX.total_current;
+}
+function pct(i){
+  if(!PMX.total_current) return '0%';
+  return (PMX.current_qty[i] / PMX.total_current * 100).toFixed(1) + '%';
+}
+
+/* set classes without full re-render */
+function applyStateClasses(){
+  for(var i=0; i<PMX.sizes.length; i++){
+    var el = document.getElementById('mq-' + i);
+    if(!el) continue;
+    el.classList.remove('state-auto','state-manual','state-dist');
+    el.classList.add('state-' + PMX.size_state[i]);
+  }
+  var tot = document.getElementById('mtx-total');
+  if(tot){ tot.classList.remove('state-auto','state-manual','state-dist'); tot.classList.add('state-' + tstateCls()); }
+}
+function updatePctRow(){
+  for(var i=0; i<PMX.sizes.length; i++){
+    var el = document.getElementById('pct-' + i);
+    if(el) el.textContent = pct(i);
+  }
+}
+function updateCost(){
+  var el = document.getElementById('mtx-cost-val');
+  if(el) el.innerHTML = fmtBDT(orderCost());
+}
+function onCostInput(){ if(PMX){ updateCost(); } }
+
+/* ── RULE 2 / RULE 5: edit a single size ──────────────────────────────────*/
+function onSizeInput(i){
+  var el = document.getElementById('mq-' + i);
+  var v = parseInt(el.value, 10);
+  if(isNaN(v) || v < 0) v = 0;
+  PMX.current_qty[i] = v;
+  PMX.size_state[i] = 'manual';                 // this size → purple
+  PMX.total_current = sumQty();                 // total recalculates
+  PMX.total_state = (PMX.total_current === PMX.total_auto && allAuto()) ? 'auto' : 'manual';
+  var tot = document.getElementById('mtx-total');
+  if(tot) tot.value = PMX.total_current;
+  applyStateClasses(); updatePctRow(); updateCost(); refreshBanner();
+}
+
+/* ── RULE 3: edit total → redistribute by original auto ratios ────────────*/
+function onTotalInput(){
+  var tot = document.getElementById('mtx-total');
+  var nt = parseInt(tot.value, 10);
+  if(isNaN(nt) || nt < 0) nt = 0;
+
+  if(nt === PMX.total_auto){ resetToBrain(); return; }   // back to Brain state
+
+  var n = PMX.sizes.length;
+  var newq = new Array(n);
+  var sumFloor = 0;
+  if(PMX.total_auto > 0){
+    for(var i=0; i<n; i++){
+      var ratio = PMX.auto_qty[i] / PMX.total_auto;
+      newq[i] = Math.floor(ratio * nt);
+      sumFloor += newq[i];
+    }
+  } else {
+    var base = Math.floor(nt / n);
+    for(var k=0; k<n; k++){ newq[k] = base; sumFloor += base; }
+  }
+  // remainder → size with highest 30d sales
+  var rem = nt - sumFloor;
+  if(rem > 0){
+    var maxIdx = 0, maxV = -1;
+    for(var m=0; m<n; m++){ if((PMX.sales_30d[m]||0) > maxV){ maxV = PMX.sales_30d[m]||0; maxIdx = m; } }
+    newq[maxIdx] += rem;
+  }
+  PMX.current_qty = newq;
+  PMX.size_state = PMX.sizes.map(function(){ return 'dist'; });   // all amber
+  PMX.total_current = nt;
+  PMX.total_state = 'redistributed';
+
+  for(var s=0; s<n; s++){ var se = document.getElementById('mq-'+s); if(se) se.value = newq[s]; }
+  applyStateClasses(); updatePctRow(); updateCost(); refreshBanner();
+}
+
+function onTotalKey(e){
+  if(e.key === 'Enter'){ e.preventDefault(); onTotalInput(); }
+}
+
+/* ── RULE 4: reset to Brain ───────────────────────────────────────────────*/
+function resetToBrain(){
+  PMX.current_qty = PMX.auto_qty.slice();
+  PMX.size_state = PMX.sizes.map(function(){ return 'auto'; });
+  PMX.total_current = PMX.total_auto;
+  PMX.total_state = 'auto';
+  for(var i=0; i<PMX.sizes.length; i++){ var se = document.getElementById('mq-'+i); if(se) se.value = PMX.current_qty[i]; }
+  var tot = document.getElementById('mtx-total'); if(tot) tot.value = PMX.total_current;
+  applyStateClasses(); updatePctRow(); updateCost(); refreshBanner();
+}
+
+function sumQty(){ var t=0; for(var i=0;i<PMX.current_qty.length;i++) t += (PMX.current_qty[i]||0); return t; }
+function allAuto(){ for(var i=0;i<PMX.size_state.length;i++){ if(PMX.size_state[i] !== 'auto') return false; } return true; }
+
+/* banner: redistribution context + zero-size warning */
+function refreshBanner(){
+  var b = document.getElementById('dist-banner');
+  var zeros = [];
+  for(var i=0;i<PMX.current_qty.length;i++){ if((PMX.current_qty[i]||0) === 0) zeros.push(PMX.sizes[i]); }
+  var redistributing = PMX.total_state === 'redistributed' || PMX.size_state.indexOf('dist') >= 0;
+
+  if(zeros.length){
+    b.className = 'dist-banner warn';
+    b.style.display = 'block';
+    b.innerHTML = '&#9888; Size ' + esc(zeros.join(', ')) + ' is 0 — confirm intentional.';
+    return;
+  }
+  if(redistributing){
+    b.className = 'dist-banner amber';
+    b.style.display = 'block';
+    b.innerHTML = 'Total overridden to ' + PMX.total_current
+      + ' pcs — sizes redistributed proportionally. Edit any size to fine-tune.';
+    return;
+  }
+  b.style.display = 'none';
+}
 
 function submitPo(){
   var err = document.getElementById('form-err');
   err.classList.remove('show');
-  var product = document.getElementById('f-product').value.trim();
-  var qty = document.getElementById('f-qty').value.trim();
   var due = document.getElementById('f-due').value.trim();
-  if(!product){ err.innerHTML = 'Product name is required.'; err.classList.add('show'); return; }
-  if(!qty || Number(qty) <= 0){ err.innerHTML = 'Quantity must be greater than zero.'; err.classList.add('show'); return; }
+
+  if(!PMX){ err.innerHTML = 'Select a product first.'; err.classList.add('show'); return; }
+  if(!PMX.total_current || PMX.total_current <= 0){ err.innerHTML = 'Total quantity must be greater than zero.'; err.classList.add('show'); return; }
+  for(var i=0;i<PMX.current_qty.length;i++){ if(PMX.current_qty[i] < 0){ err.innerHTML = 'Sizes cannot be negative.'; err.classList.add('show'); return; } }
   if(!due){ err.innerHTML = 'Due date is required.'; err.classList.add('show'); return; }
+
+  var breakdown = [];
+  for(var j=0;j<PMX.sizes.length;j++){ breakdown.push({size: PMX.sizes[j], qty: PMX.current_qty[j]}); }
+
   var body = {
-    product_name: product,
+    product_name: PMX.product_name + (PMX.color ? ' - ' + PMX.color : ''),
     sku: document.getElementById('f-sku').value.trim(),
     supplier_name: document.getElementById('f-supplier').value.trim(),
-    quantity_ordered: Number(qty),
+    quantity_ordered: PMX.total_current,
     unit_cost_bdt: document.getElementById('f-cost').value.trim(),
     due_date: due,
-    notes: document.getElementById('f-notes').value.trim()
+    notes: document.getElementById('f-notes').value.trim(),
+    size_breakdown: breakdown
   };
   fetch('/api/sc/pos', {
     method: 'POST',
@@ -1130,13 +1535,6 @@ function submitPo(){
   }).then(function(r){ return r.json(); }).then(function(data){
     if(data.error){ err.innerHTML = esc(data.error); err.classList.add('show'); return; }
     closeModal();
-    document.getElementById('f-product').value = '';
-    document.getElementById('f-sku').value = '';
-    document.getElementById('f-supplier').value = '';
-    document.getElementById('f-qty').value = '';
-    document.getElementById('f-cost').value = '';
-    document.getElementById('f-due').value = '';
-    document.getElementById('f-notes').value = '';
     loadPos();
   }).catch(function(e){ err.innerHTML = 'Failed: ' + esc(e.message); err.classList.add('show'); });
 }

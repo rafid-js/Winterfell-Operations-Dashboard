@@ -7,6 +7,7 @@ results are JSON-serialisable straight out of the route handlers.
 
 Queries use parameterised text() — never string-format user input into SQL.
 """
+import json
 import os
 import sys
 from datetime import date, datetime
@@ -27,6 +28,22 @@ STAGE_PCT = {
     'QC': 83,
     'Delivered': 100,
 }
+
+# Canonical apparel size ordering for the PO size matrix.
+SIZE_ORDER = {
+    'XXS': 0, '2XS': 0, 'XS': 1, 'S': 2, 'M': 3, 'L': 4, 'XL': 5,
+    'XXL': 6, '2XL': 6, 'XXXL': 7, '3XL': 7, '4XL': 8, '5XL': 9,
+    'FREE': 10, 'OS': 10, 'ONE SIZE': 10,
+}
+
+# Default manufacturing lead time (days) used by the Brain quantity recommender.
+DEFAULT_LEAD_TIME_DAYS = 30
+
+
+def _size_sort_key(size):
+    s = (size or '').strip().upper()
+    return (SIZE_ORDER.get(s, 50), s)
+
 
 
 # ── serialisation helpers ───────────────────────────────────────────────────
@@ -50,6 +67,16 @@ def _row_to_dict(row):
 
 def _rows_to_list(rows):
     return [_row_to_dict(r) for r in rows]
+
+
+def _has_column(conn, table, column):
+    """Return True if the given column exists (used for optional columns)."""
+    row = conn.execute(text("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = :t AND column_name = :c
+        LIMIT 1
+    """), {'t': table, 'c': column}).fetchone()
+    return row is not None
 
 
 # ── id generators ───────────────────────────────────────────────────────────
@@ -238,6 +265,12 @@ def create_po(data):
     issued_date = data.get('issued_date') or datetime.utcnow().date().isoformat()
     notes = data.get('notes') or None
 
+    # Optional per-size breakdown: list of {size, qty}. Stored as JSONB when
+    # the column exists (added by the supply_chain migration).
+    size_breakdown = data.get('size_breakdown') or None
+    if size_breakdown is not None and not isinstance(size_breakdown, (list, dict)):
+        size_breakdown = None
+
     with get_connection() as conn:
         # Resolve supplier.
         supplier_id = data.get('supplier_id')
@@ -248,23 +281,24 @@ def create_po(data):
 
         po_id = next_po_id(conn)
 
-        conn.execute(text("""
-            INSERT INTO purchase_orders (
+        store_breakdown = size_breakdown is not None and _has_column(
+            conn, 'purchase_orders', 'size_breakdown')
+
+        cols = """
                 po_id, sku, product_name, supplier_id,
                 quantity_ordered, unit_cost_bdt, total_cost_bdt,
                 advance_paid_bdt, balance_due_bdt, total_paid_bdt,
                 current_stage, stage_completion_pct, po_status,
                 issued_date, due_date, expected_delivery,
-                triggered_by, notes
-            ) VALUES (
+                triggered_by, notes"""
+        vals = """
                 :po_id, :sku, :product_name, :supplier_id,
                 :quantity, :unit_cost, :total_cost,
                 :advance_paid, :balance_due, :advance_paid2,
                 'PO Issued', 0, 'Active',
                 :issued_date, :due_date, :due_date2,
-                'manual', :notes
-            )
-        """), {
+                'manual', :notes"""
+        params = {
             'po_id': po_id,
             'sku': sku,
             'product_name': product_name,
@@ -279,7 +313,15 @@ def create_po(data):
             'due_date': due_date,
             'due_date2': due_date,
             'notes': notes,
-        })
+        }
+        if store_breakdown:
+            cols += ", size_breakdown"
+            vals += ", CAST(:size_breakdown AS JSONB)"
+            params['size_breakdown'] = json.dumps(size_breakdown)
+
+        conn.execute(text(
+            "INSERT INTO purchase_orders (" + cols + ") VALUES (" + vals + ")"
+        ), params)
 
         # Initial timeline event.
         tl_id = next_tl_id(conn)
@@ -756,3 +798,167 @@ def unlink_so_from_po(po_id, so_number):
             WHERE po_id = :po_id
         """), {'so': so_number, 'po_id': po_id})
         conn.commit()
+
+
+# ── product picker + Brain quantity matrix ───────────────────────────────────
+
+def search_products(query, limit=20):
+    """
+    Search active products for the New PO picker, grouped by (product_name, color).
+
+    Each group is one orderable 'product' whose individual sizes are separate
+    SKU rows. Returns lightweight rows for the dropdown.
+    """
+    q = (query or '').strip()
+    like = '%' + q + '%'
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT product_name,
+                   COALESCE(color, '') AS color,
+                   COUNT(*)            AS variant_count,
+                   COALESCE(SUM(current_stock), 0) AS total_stock,
+                   AVG(cost_price)     AS avg_cost
+            FROM skus
+            WHERE is_active = TRUE
+              AND product_name IS NOT NULL
+              AND (product_name ILIKE :like OR sku ILIKE :like OR color ILIKE :like)
+            GROUP BY product_name, COALESCE(color, '')
+            ORDER BY product_name ASC, color ASC
+            LIMIT :limit
+        """), {'like': like, 'limit': int(limit)}).fetchall()
+    return _rows_to_list(rows)
+
+
+def get_product_matrix(product_name, color=None, lead_time_days=None):
+    """
+    Build the per-size Brain quantity recommendation for a product.
+
+    Returns a dict matching the front-end size-matrix contract:
+        sku_base, product_name, color, lead_time_days, unit_cost_bdt,
+        sizes[], auto_qty[], current_stock[], sales_30d[], waiting_orders[],
+        total_auto, total_30d_sales
+
+    Recommended total (Brain):
+        recommended_total = ceil(
+            (total_30d_sales / 30 * lead_time_days)
+            - total_current_stock
+            + (total_30d_sales / 30 * 5)          # 5-day safety buffer
+        )
+    Per-size split (proportional to 30d sales, ceil):
+        size_qty = ceil(size_30d_sales / total_30d_sales * recommended_total)
+    """
+    import math
+
+    pname = (product_name or '').strip()
+    if not pname:
+        raise ValueError('product_name is required')
+    color = (color or '').strip() or None
+    try:
+        lead = int(lead_time_days) if lead_time_days not in (None, '') else DEFAULT_LEAD_TIME_DAYS
+    except (TypeError, ValueError):
+        lead = DEFAULT_LEAD_TIME_DAYS
+    if lead <= 0:
+        lead = DEFAULT_LEAD_TIME_DAYS
+
+    with get_connection() as conn:
+        sku_rows = conn.execute(text("""
+            SELECT sku, COALESCE(size, '') AS size,
+                   COALESCE(current_stock, 0) AS current_stock,
+                   cost_price
+            FROM skus
+            WHERE product_name = :pname
+              AND is_active = TRUE
+              AND (:color IS NULL OR COALESCE(color, '') = :color)
+        """), {'pname': pname, 'color': color}).fetchall()
+
+        if not sku_rows:
+            raise ValueError('No active SKUs found for that product')
+
+        variants = _rows_to_list(sku_rows)
+        variants.sort(key=lambda v: _size_sort_key(v.get('size')))
+        skus = [v['sku'] for v in variants]
+
+        # 30-day sales per SKU
+        sales_rows = conn.execute(text("""
+            SELECT oi.sku, COALESCE(SUM(oi.quantity), 0) AS qty
+            FROM order_items oi
+            JOIN orders o ON o.so_number = oi.so_number
+            WHERE oi.sku = ANY(:skus)
+              AND o.order_date >= NOW() - INTERVAL '30 days'
+            GROUP BY oi.sku
+        """), {'skus': skus}).fetchall()
+        sales_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in sales_rows}
+
+        # Outstanding (waiting) orders per SKU — not yet delivered/cancelled
+        wait_rows = conn.execute(text("""
+            SELECT oi.sku, COALESCE(SUM(oi.quantity), 0) AS qty
+            FROM order_items oi
+            JOIN orders o ON o.so_number = oi.so_number
+            WHERE oi.sku = ANY(:skus)
+              AND COALESCE(o.nuport_status, '') NOT IN
+                  ('Delivered', 'Cancelled', 'Returned', 'Refunded')
+            GROUP BY oi.sku
+        """), {'skus': skus}).fetchall()
+        wait_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in wait_rows}
+
+    sizes, stock, sales, waiting = [], [], [], []
+    cost_vals = []
+    for v in variants:
+        sizes.append(v.get('size') or '—')
+        stock.append(int(v.get('current_stock') or 0))
+        sales.append(sales_map.get(v['sku'], 0))
+        waiting.append(wait_map.get(v['sku'], 0))
+        if v.get('cost_price'):
+            cost_vals.append(float(v['cost_price']))
+
+    total_sales = sum(sales)
+    total_stock = sum(stock)
+    daily = (total_sales / 30.0) if total_sales else 0.0
+    recommended_total = math.ceil((daily * lead) - total_stock + (daily * 5))
+    if recommended_total < 0:
+        recommended_total = 0
+
+    auto_qty = []
+    if total_sales > 0 and recommended_total > 0:
+        for s in sales:
+            auto_qty.append(int(math.ceil(s / total_sales * recommended_total)))
+    else:
+        # No sales signal — distribute evenly so the matrix is still usable.
+        n = len(sizes)
+        base = recommended_total // n if n else 0
+        auto_qty = [base for _ in sizes]
+        if n and recommended_total - base * n > 0:
+            auto_qty[0] += recommended_total - base * n
+
+    unit_cost = round(sum(cost_vals) / len(cost_vals), 2) if cost_vals else 0.0
+    sku_base = _common_sku_prefix(skus)
+
+    return {
+        'sku_base': sku_base,
+        'product_name': pname,
+        'color': color or '',
+        'lead_time_days': lead,
+        'unit_cost_bdt': unit_cost,
+        'sizes': sizes,
+        'auto_qty': auto_qty,
+        'current_stock': stock,
+        'sales_30d': sales,
+        'waiting_orders': waiting,
+        'total_auto': sum(auto_qty),
+        'total_30d_sales': total_sales,
+        'skus': skus,
+    }
+
+
+def _common_sku_prefix(skus):
+    """Best-effort common base for a set of size SKUs (for display only)."""
+    if not skus:
+        return ''
+    if len(skus) == 1:
+        return skus[0]
+    s1, s2 = min(skus), max(skus)
+    i = 0
+    while i < len(s1) and i < len(s2) and s1[i] == s2[i]:
+        i += 1
+    base = s1[:i].rstrip('-_ ')
+    return base or skus[0]

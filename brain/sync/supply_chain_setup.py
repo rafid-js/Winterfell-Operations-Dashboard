@@ -134,6 +134,11 @@ VALUES ('po_risk_engine', 'PO risk recalculation', 'Every 6 hours')
 ON CONFLICT (script_name) DO NOTHING;
 """
 
+# Phase 2 incremental migrations — safe to re-run.
+MIGRATIONS_SQL = [
+    "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS size_breakdown JSONB;",
+]
+
 
 def run():
     with get_connection() as conn:
@@ -156,8 +161,12 @@ def run():
         print("Seeding system_status (po_risk_engine) ...")
         conn.execute(text(SYSTEM_STATUS_SQL))
 
+        print("Applying incremental migrations ...")
+        for stmt in MIGRATIONS_SQL:
+            conn.execute(text(stmt))
+
         conn.commit()
-    print("Supply Chain Phase 1 migration complete.")
+    print("Supply Chain migration complete.")
 
 
 if __name__ == '__main__':
