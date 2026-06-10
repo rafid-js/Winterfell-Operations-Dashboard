@@ -253,48 +253,104 @@ def _upsert_supplier(conn, data):
     return row[0]
 
 
+def _normalize_po_products(data):
+    """
+    Return a normalised list of product line items for a PO.
+
+    Accepts either the new multi-product shape (data['products'] = [...]) or the
+    legacy single-product shape (top-level product_name / quantity_ordered /
+    size_breakdown). Each returned item is:
+
+        {product_name, sku, unit_cost_bdt, quantity, total_cost_bdt, size_breakdown}
+    """
+    raw = data.get('products')
+    if not raw:
+        # Legacy single-product fallback.
+        raw = [{
+            'product_name': data.get('product_name'),
+            'sku': data.get('sku'),
+            'unit_cost_bdt': data.get('unit_cost_bdt'),
+            'quantity': data.get('quantity_ordered') or data.get('quantity'),
+            'size_breakdown': data.get('size_breakdown'),
+        }]
+    if not isinstance(raw, list):
+        raise ValueError('products must be a list')
+
+    items = []
+    for idx, p in enumerate(raw):
+        if not isinstance(p, dict):
+            raise ValueError('Each product must be an object')
+        name = (p.get('product_name') or '').strip()
+        if not name:
+            raise ValueError('Product name is required for every line item')
+
+        try:
+            qty = int(p.get('quantity') or p.get('quantity_ordered') or 0)
+        except (TypeError, ValueError):
+            raise ValueError('Quantity must be a number for "' + name + '"')
+        if qty <= 0:
+            raise ValueError('Quantity must be greater than zero for "' + name + '"')
+
+        uc = p.get('unit_cost_bdt')
+        uc = float(uc) if uc not in (None, '') else 0.0
+
+        sku = (p.get('sku') or '').strip() or None
+
+        sb = p.get('size_breakdown')
+        if sb is not None and not isinstance(sb, (list, dict)):
+            sb = None
+
+        items.append({
+            'product_name': name,
+            'sku': sku,
+            'unit_cost_bdt': uc,
+            'quantity': qty,
+            'total_cost_bdt': round(uc * qty, 2),
+            'size_breakdown': sb,
+        })
+    return items
+
+
 def create_po(data):
     """
     Create a purchase order plus its initial 'PO generated' timeline event.
 
-    Required: product_name, quantity_ordered, due_date.
+    Supports multiple products per PO via data['products'] (a list of line
+    items). The scalar columns are populated with roll-up summaries so the
+    existing list/detail/supplier views keep working:
+        product_name      -> first product (+ "N more" suffix when multiple)
+        sku               -> first product's sku
+        quantity_ordered  -> sum of all line quantities
+        total_cost_bdt    -> sum of all line totals
+        unit_cost_bdt     -> weighted average across lines
+
     Supplier may be passed as supplier_id or supplier_name (upsert by name).
     Returns the generated po_id.
     """
-    product_name = (data.get('product_name') or '').strip()
-    if not product_name:
-        raise ValueError('Product name is required')
-
-    try:
-        quantity = int(data.get('quantity_ordered') or 0)
-    except (TypeError, ValueError):
-        raise ValueError('Quantity must be a number')
-    if quantity <= 0:
-        raise ValueError('Quantity must be greater than zero')
+    products = _normalize_po_products(data)
 
     due_date = data.get('due_date')
     if not due_date:
         raise ValueError('Due date is required')
 
-    unit_cost = data.get('unit_cost_bdt')
-    unit_cost = float(unit_cost) if unit_cost not in (None, '') else 0.0
     advance_paid = data.get('advance_paid_bdt')
     advance_paid = float(advance_paid) if advance_paid not in (None, '') else 0.0
 
-    total_cost = unit_cost * quantity
+    # Roll-up summaries across all line items.
+    total_qty = sum(p['quantity'] for p in products)
+    total_cost = round(sum(p['total_cost_bdt'] for p in products), 2)
+    unit_cost = round(total_cost / total_qty, 2) if total_qty else 0.0
     balance_due = total_cost - advance_paid
 
-    sku = data.get('sku') or None
-    if sku == '':
-        sku = None
+    first = products[0]
+    if len(products) == 1:
+        product_name = first['product_name']
+    else:
+        product_name = first['product_name'] + ' + ' + str(len(products) - 1) + ' more'
+    sku = first['sku']
+
     issued_date = data.get('issued_date') or datetime.utcnow().date().isoformat()
     notes = data.get('notes') or None
-
-    # Optional per-size breakdown: list of {size, qty}. Stored as JSONB when
-    # the column exists (added by the supply_chain migration).
-    size_breakdown = data.get('size_breakdown') or None
-    if size_breakdown is not None and not isinstance(size_breakdown, (list, dict)):
-        size_breakdown = None
 
     with get_connection() as conn:
         # Resolve supplier.
@@ -306,8 +362,8 @@ def create_po(data):
 
         po_id = next_po_id(conn)
 
-        store_breakdown = size_breakdown is not None and _has_column(
-            conn, 'purchase_orders', 'size_breakdown')
+        store_breakdown = _has_column(conn, 'purchase_orders', 'size_breakdown')
+        store_products = _has_column(conn, 'purchase_orders', 'po_products')
 
         cols = """
                 po_id, sku, product_name, supplier_id,
@@ -328,7 +384,7 @@ def create_po(data):
             'sku': sku,
             'product_name': product_name,
             'supplier_id': supplier_id,
-            'quantity': quantity,
+            'quantity': total_qty,
             'unit_cost': unit_cost,
             'total_cost': total_cost,
             'advance_paid': advance_paid,
@@ -339,10 +395,14 @@ def create_po(data):
             'due_date2': due_date,
             'notes': notes,
         }
-        if store_breakdown:
+        if store_breakdown and first.get('size_breakdown') is not None:
             cols += ", size_breakdown"
             vals += ", CAST(:size_breakdown AS JSONB)"
-            params['size_breakdown'] = json.dumps(size_breakdown)
+            params['size_breakdown'] = json.dumps(first['size_breakdown'])
+        if store_products:
+            cols += ", po_products"
+            vals += ", CAST(:po_products AS JSONB)"
+            params['po_products'] = json.dumps(products)
 
         conn.execute(text(
             "INSERT INTO purchase_orders (" + cols + ") VALUES (" + vals + ")"
@@ -350,6 +410,12 @@ def create_po(data):
 
         # Initial timeline event.
         tl_id = next_tl_id(conn)
+        if len(products) == 1:
+            note = str(total_qty) + ' pcs of ' + first['product_name'] + ' ordered.'
+        else:
+            note = (str(total_qty) + ' pcs across ' + str(len(products))
+                    + ' products ordered: '
+                    + ', '.join(p['product_name'] for p in products) + '.')
         conn.execute(text("""
             INSERT INTO po_timeline (
                 event_id, po_id, stage, event_title, event_note,
@@ -361,7 +427,7 @@ def create_po(data):
         """), {
             'event_id': tl_id,
             'po_id': po_id,
-            'note': str(quantity) + ' pcs of ' + product_name + ' ordered.',
+            'note': note,
             'po_id2': po_id,
         })
 
