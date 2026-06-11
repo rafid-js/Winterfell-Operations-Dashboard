@@ -46,6 +46,16 @@ def api_suppliers():
         return jsonify({'error': str(e)}), 500
 
 
+@sc_bp.route('/api/sc/suppliers/search')
+@sc_login_required
+def api_suppliers_search():
+    try:
+        q = request.args.get('q', '')
+        return jsonify(models.search_suppliers(q))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @sc_bp.route('/api/sc/suppliers', methods=['POST'])
 @sc_login_required
 def api_create_supplier():
@@ -792,16 +802,26 @@ function renderMetrics(data){
 function renderTable(orders){
   var wrap=document.getElementById('wo-table');
   if(!orders.length){
-    wrap.innerHTML='<div style="color:#8b949e;font-size:12px;padding:8px 0">No linked orders yet. Use the form above to link waiting SO numbers.</div>';
+    wrap.innerHTML='<div style="color:#8b949e;font-size:12px;padding:16px 0;line-height:1.7">'
+      +'No waiting orders found for this PO.<br>'
+      +'<span style="font-size:11px">Auto-match looks for orders with Pending/Requested/On Hold status whose product matches this PO. Use the form above to manually link an SO.</span>'
+      +'</div>';
     return;
   }
   var h='<table class="wo-tbl"><thead><tr>';
-  h+='<th>#</th><th>SO Number</th><th>Customer</th><th>Amount</th><th>Status</th><th>Waiting</th><th>Unlink</th>';
+  h+='<th>#</th><th>SO Number</th><th>Customer</th><th>Amount</th><th>Status</th><th>Waiting</th><th>Source</th><th>Action</th>';
   h+='</tr></thead><tbody>';
   for(var i=0;i<orders.length;i++){
     var o=orders[i];
     var dw=o.days_waiting||0;
     var wCls=dw>=20?'wait-urgent':dw>=12?'wait-warn':'';
+    var isLinked=o.is_linked===1||o.is_linked===true;
+    var srcBadge=isLinked
+      ?'<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#EEEDFE;color:#3C3489;border:0.5px solid #7F77DD">Linked</span>'
+      :'<span style="font-size:10px;padding:2px 7px;border-radius:10px;background:#E1F5EE;color:#085041;border:0.5px solid #5DCAA5">Auto</span>';
+    var action=isLinked
+      ?'<button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" onclick="unlinkSO(\\'' + esc(o.so_number) + '\\')">Unlink</button>'
+      :'<button class="btn btn-primary" style="font-size:10px;padding:3px 8px" onclick="linkSO2(\\'' + esc(o.so_number) + '\\')">+ Link</button>';
     h+='<tr>';
     h+='<td>'+(i+1)+'</td>';
     h+='<td><span class="mono" style="color:var(--purple)">'+esc(o.so_number)+'</span></td>';
@@ -809,11 +829,24 @@ function renderTable(orders){
     h+='<td>'+fmtBDT(o.total_receivable||0)+'</td>';
     h+='<td>'+esc(o.nuport_status||o.payment_status||'')+'</td>';
     h+='<td class="'+wCls+'">'+dw+' days</td>';
-    h+='<td><button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" onclick="unlinkSO(\\'' + esc(o.so_number) + '\\')">Unlink</button></td>';
+    h+='<td>'+srcBadge+'</td>';
+    h+='<td>'+action+'</td>';
     h+='</tr>';
   }
   h+='</tbody></table>';
   wrap.innerHTML=h;
+}
+
+function linkSO2(so){
+  var msg=document.getElementById('link-msg');
+  fetch('/api/sc/po/'+encodeURIComponent(POID)+'/link-so',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({so_number:so})
+  }).then(function(r){return r.json();}).then(function(data){
+    if(data.error){ msg.style.display='block'; msg.style.color='#791F1F'; msg.textContent=data.error; return; }
+    msg.style.display='block'; msg.style.color='#085041'; msg.textContent=so+' linked.';
+    setTimeout(function(){msg.style.display='none';},2000);
+    loadData();
+  }).catch(function(e){ msg.style.display='block'; msg.style.color='#791F1F'; msg.textContent='Failed: '+e.message; });
 }
 
 function linkSO(){
@@ -1041,9 +1074,13 @@ SC_LIST_HTML = """<!doctype html>
       <div class="po-divider"></div>
 
       <!-- PO-level fields shared across all products -->
-      <div class="field">
+      <div class="field" style="position:relative">
         <label>Supplier</label>
-        <input id="f-supplier" type="text" placeholder="Existing name links, new name creates">
+        <input id="f-supplier" type="text" autocomplete="off"
+               placeholder="Search or type new supplier name&hellip;"
+               oninput="onSupplierSearch()" onfocus="onSupplierSearch()">
+        <input id="f-supplier-id" type="hidden">
+        <div id="supplier-results" class="picker-results"></div>
       </div>
       <div class="field">
         <label>Due Date *</label>
@@ -1711,6 +1748,7 @@ function submitPo(){
   var body = {
     products: PO_LINES,
     supplier_name: document.getElementById('f-supplier').value.trim(),
+    supplier_id: document.getElementById('f-supplier-id').value || null,
     due_date: due,
     notes: document.getElementById('f-notes').value.trim()
   };
@@ -1749,6 +1787,62 @@ function handlePrefill(){
       initPMX(data);
     }).catch(function(e){ mb.innerHTML = '<div class="picker-empty">Failed: ' + esc(e.message) + '</div>'; });
 }
+
+/* ── supplier search picker ──────────────────────────────────────────────── */
+var supTimer = null;
+var supList = [];
+
+function onSupplierSearch(){
+  var q = document.getElementById('f-supplier').value.trim();
+  document.getElementById('f-supplier-id').value = '';
+  if(supTimer) clearTimeout(supTimer);
+  supTimer = setTimeout(function(){ doSupplierSearch(q); }, 220);
+}
+
+function doSupplierSearch(q){
+  fetch('/api/sc/suppliers/search?q=' + encodeURIComponent(q))
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      supList = Array.isArray(data) ? data : [];
+      renderSupplierResults(q);
+    }).catch(function(){ supList = []; });
+}
+
+function renderSupplierResults(q){
+  var box = document.getElementById('supplier-results');
+  if(!box) return;
+  var h = '';
+  for(var i=0; i<supList.length; i++){
+    var s = supList[i];
+    h += '<div class="picker-item" onclick="pickSupplier(' + i + ')">'
+       + '<div class="pi-name">' + esc(s.name) + '</div>'
+       + '<div class="pi-meta">' + (s.location ? esc(s.location) + ' &middot; ' : '') + 'Score: ' + (parseFloat(s.reliability_score||5).toFixed(1)) + '/10</div>'
+       + '</div>';
+  }
+  if(!h && q){
+    h = '<div class="picker-item" onclick="document.getElementById(\'supplier-results\').classList.remove(\'open\')">'
+      + '<div class="pi-name" style="color:#085041">+ Create &ldquo;' + esc(q) + '&rdquo;</div>'
+      + '<div class="pi-meta">New supplier will be created when PO is saved</div>'
+      + '</div>';
+  }
+  if(h){ box.innerHTML = h; box.classList.add('open'); }
+  else  { box.classList.remove('open'); }
+}
+
+function pickSupplier(i){
+  var s = supList[i];
+  if(!s) return;
+  document.getElementById('f-supplier').value = s.name;
+  document.getElementById('f-supplier-id').value = s.id;
+  document.getElementById('supplier-results').classList.remove('open');
+}
+
+document.addEventListener('click', function(e){
+  var box = document.getElementById('supplier-results');
+  var inp = document.getElementById('f-supplier');
+  if(box && inp && !box.contains(e.target) && e.target !== inp)
+    box.classList.remove('open');
+});
 
 loadPos();
 handlePrefill();
@@ -1832,6 +1926,33 @@ SC_DETAIL_HTML = """<!doctype html>
 .success-box{background:#E1F5EE;border:0.5px solid #5DCAA5;border-radius:8px;padding:18px 20px;color:#085041}
 .success-box h4{color:#085041;font-size:14px;font-weight:500;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 .success-box ul{margin:8px 0 14px 18px;font-size:12px;line-height:1.55}
+/* edit modal: wider to fit size matrix */
+#edit-modal .modal{width:min(760px,96vw)}
+/* size matrix (edit mode) */
+.mtx-tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.mtx-tbl{border-collapse:collapse;width:100%}
+.mtx-tbl th,.mtx-tbl td{text-align:center;padding:5px 7px;font-size:12px;color:var(--text-secondary)}
+.mtx-tbl thead th{font-size:14px;font-weight:700;color:var(--text-primary);padding-bottom:7px}
+.mtx-tbl thead th:first-child{text-align:left}
+.mtx-tbl td.rlabel{text-align:left;font-size:10px;color:var(--text-tertiary);white-space:nowrap;
+  text-transform:uppercase;letter-spacing:.04em;font-weight:600;padding-right:14px}
+.mtx-qty{width:64px;text-align:center;border-radius:8px;padding:9px 4px;font-size:15px;font-weight:600;
+  border:1.5px solid var(--border);font-family:Arial,sans-serif}
+.mtx-qty:focus{outline:none;box-shadow:0 0 0 3px rgba(127,119,221,.18)}
+/* delete confirm modal */
+.del-confirm-box{background:#FCEBEB;border:0.5px solid #F5C6C6;border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.del-confirm-box p{font-size:13px;color:#791F1F;line-height:1.55}
+.del-confirm-box .del-id{font-family:monospace;font-weight:700}
+/* supplier picker (used in edit form) */
+.picker-results{position:absolute;left:0;right:0;top:100%;z-index:30;background:#fff;
+  border:0.5px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;
+  overflow-y:auto;box-shadow:0 8px 24px rgba(26,31,46,.12);display:none}
+.picker-results.open{display:block}
+.picker-item{padding:10px 12px;cursor:pointer;border-bottom:0.5px solid var(--border)}
+.picker-item:last-child{border-bottom:none}
+.picker-item:hover,.picker-item.hi{background:var(--bg-inner)}
+.picker-item .pi-name{font-size:13px;font-weight:600;color:var(--text-primary)}
+.picker-item .pi-meta{font-size:11px;color:var(--text-tertiary);margin-top:2px}
 </style>
 </head>
 <body>
@@ -2157,37 +2278,150 @@ function showSuccess(data){
 
 function resetForm(){ window.location.reload(); }
 
+/* ── edit matrix state ──────────────────────────────────────────────────── */
+var EDIT_PRODS = [];   // [{product_name, sku, unit_cost_bdt, quantity, sizes:[{size,qty}]}]
+
 function openEditModal(){
   if(!currentPo) return;
-  document.getElementById('e-product').value = currentPo.product_name || '';
-  document.getElementById('e-sku').value = currentPo.sku || '';
+
+  // Build EDIT_PRODS from po_products or fallback to scalar fields
+  var prods = currentPo.po_products;
+  if(typeof prods === 'string'){ try{ prods = JSON.parse(prods); }catch(e){ prods = null; } }
+  if(prods && prods.length > 0){
+    EDIT_PRODS = prods.map(function(p){
+      var sb = p.size_breakdown;
+      if(typeof sb === 'string'){ try{ sb = JSON.parse(sb); }catch(e){ sb = null; } }
+      return {
+        product_name: p.product_name || '',
+        sku: p.sku || '',
+        unit_cost_bdt: parseFloat(p.unit_cost_bdt) || 0,
+        quantity: parseInt(p.quantity || p.quantity_ordered) || 0,
+        sizes: (Array.isArray(sb) ? sb : []).map(function(s){ return {size: s.size, qty: parseInt(s.qty)||0}; })
+      };
+    });
+  } else {
+    var sb2 = currentPo.size_breakdown;
+    if(typeof sb2 === 'string'){ try{ sb2 = JSON.parse(sb2); }catch(e){ sb2 = null; } }
+    EDIT_PRODS = [{
+      product_name: currentPo.product_name || '',
+      sku: currentPo.sku || '',
+      unit_cost_bdt: parseFloat(currentPo.unit_cost_bdt) || 0,
+      quantity: parseInt(currentPo.quantity_ordered) || 0,
+      sizes: (Array.isArray(sb2) ? sb2 : []).map(function(s){ return {size: s.size, qty: parseInt(s.qty)||0}; })
+    }];
+  }
+
   document.getElementById('e-supplier').value = currentPo.supplier_name || '';
-  document.getElementById('e-qty').value = currentPo.quantity_ordered || '';
-  document.getElementById('e-cost').value = currentPo.unit_cost_bdt || '';
+  document.getElementById('e-supplier-id').value = '';
   document.getElementById('e-advance').value = currentPo.advance_paid_bdt || '';
   document.getElementById('e-due').value = (currentPo.due_date || '').substring(0,10);
   document.getElementById('e-notes').value = currentPo.notes || '';
+  renderEditMatrix();
   document.getElementById('edit-err').classList.remove('show');
   document.getElementById('edit-modal').classList.add('open');
 }
 function closeEditModal(){ document.getElementById('edit-modal').classList.remove('open'); }
 function editBgClick(e){ if(e.target === document.getElementById('edit-modal')) closeEditModal(); }
 
+function renderEditMatrix(){
+  var wrap = document.getElementById('e-matrix');
+  if(!wrap || !EDIT_PRODS.length){ return; }
+  var h = '';
+  for(var pi=0; pi<EDIT_PRODS.length; pi++){
+    var prod = EDIT_PRODS[pi];
+    if(EDIT_PRODS.length > 1){
+      h += '<div style="font-size:13px;font-weight:600;color:var(--text-primary);margin:10px 0 4px">'
+         + esc(prod.product_name) + '</div>';
+    }
+    if(prod.sizes.length > 0){
+      h += '<div class="row2" style="margin-bottom:8px"><div class="field">'
+         + '<label>Unit Cost (BDT)</label>'
+         + '<input id="ec-cost-' + pi + '" type="number" min="0" step="0.01" value="' + (prod.unit_cost_bdt||0) + '" oninput="updateEditTotals()">'
+         + '</div></div>';
+      h += '<div class="mtx-tbl-wrap" style="margin-bottom:12px"><table class="mtx-tbl"><thead><tr>'
+         + '<th style="text-align:left">Size</th>';
+      for(var si=0; si<prod.sizes.length; si++) h += '<th>' + esc(prod.sizes[si].size) + '</th>';
+      h += '</tr></thead><tbody><tr><td class="rlabel">Qty to order</td>';
+      for(var si=0; si<prod.sizes.length; si++){
+        h += '<td><input class="mtx-qty" id="eq-' + pi + '-' + si + '" type="number" min="0" step="1" '
+           + 'value="' + (prod.sizes[si].qty||0) + '" oninput="onEditSizeInput(' + pi + ',' + si + ')"></td>';
+      }
+      h += '</tr></tbody></table></div>';
+    } else {
+      h += '<div class="row2" style="margin-bottom:8px">'
+         + '<div class="field"><label>Unit Cost (BDT)</label>'
+         + '<input id="ec-cost-' + pi + '" type="number" min="0" step="0.01" value="' + (prod.unit_cost_bdt||0) + '" oninput="updateEditTotals()">'
+         + '</div>'
+         + '<div class="field"><label>Quantity *</label>'
+         + '<input id="ec-qty-' + pi + '" type="number" min="1" value="' + (prod.quantity||0) + '" oninput="updateEditTotals()">'
+         + '</div></div>';
+    }
+  }
+  h += '<div id="e-total-row" style="background:var(--bg-inner);border-radius:8px;padding:9px 12px;margin:4px 0 14px;font-size:12px;color:var(--text-secondary)"></div>';
+  wrap.innerHTML = h;
+  updateEditTotals();
+}
+
+function onEditSizeInput(pi, si){
+  var el = document.getElementById('eq-' + pi + '-' + si);
+  var v = parseInt(el.value, 10);
+  if(isNaN(v) || v < 0) v = 0;
+  EDIT_PRODS[pi].sizes[si].qty = v;
+  updateEditTotals();
+}
+
+function updateEditTotals(){
+  var totalQty = 0, totalCost = 0;
+  for(var pi=0; pi<EDIT_PRODS.length; pi++){
+    var uc = parseFloat((document.getElementById('ec-cost-' + pi)||{}).value) || 0;
+    EDIT_PRODS[pi].unit_cost_bdt = uc;
+    var qty = 0;
+    if(EDIT_PRODS[pi].sizes.length > 0){
+      for(var si=0; si<EDIT_PRODS[pi].sizes.length; si++) qty += (EDIT_PRODS[pi].sizes[si].qty||0);
+    } else {
+      qty = parseInt((document.getElementById('ec-qty-' + pi)||{}).value) || 0;
+    }
+    totalQty += qty; totalCost += uc * qty;
+  }
+  var row = document.getElementById('e-total-row');
+  if(row) row.innerHTML = 'Total: <b>' + totalQty + ' pcs</b> &middot; Order cost: <b>'
+    + fmtBDT(totalCost) + '</b>';
+}
+
 function saveEdit(){
   var err = document.getElementById('edit-err');
   err.classList.remove('show');
-  var product = document.getElementById('e-product').value.trim();
-  var qty = document.getElementById('e-qty').value.trim();
   var due = document.getElementById('e-due').value.trim();
-  if(!product){ err.innerHTML = 'Product name is required.'; err.classList.add('show'); return; }
-  if(!qty || Number(qty) <= 0){ err.innerHTML = 'Quantity must be greater than zero.'; err.classList.add('show'); return; }
   if(!due){ err.innerHTML = 'Due date is required.'; err.classList.add('show'); return; }
+
+  var products = [];
+  for(var pi=0; pi<EDIT_PRODS.length; pi++){
+    var prod = EDIT_PRODS[pi];
+    var uc = parseFloat((document.getElementById('ec-cost-' + pi)||{}).value) || prod.unit_cost_bdt || 0;
+    var qty = 0;
+    var sizes = prod.sizes;
+    if(sizes.length > 0){
+      for(var si=0; si<sizes.length; si++) qty += (sizes[si].qty||0);
+    } else {
+      qty = parseInt((document.getElementById('ec-qty-' + pi)||{}).value) || 0;
+    }
+    if(qty <= 0){
+      err.innerHTML = 'Quantity must be greater than zero for &ldquo;' + esc(prod.product_name) + '&rdquo;.';
+      err.classList.add('show'); return;
+    }
+    products.push({
+      product_name: prod.product_name,
+      sku: prod.sku,
+      unit_cost_bdt: uc,
+      quantity: qty,
+      size_breakdown: sizes.length > 0 ? sizes : null
+    });
+  }
+
   var body = {
-    product_name: product,
-    sku: document.getElementById('e-sku').value.trim(),
+    products: products,
     supplier_name: document.getElementById('e-supplier').value.trim(),
-    quantity_ordered: Number(qty),
-    unit_cost_bdt: document.getElementById('e-cost').value.trim(),
+    supplier_id: document.getElementById('e-supplier-id').value || null,
     advance_paid_bdt: document.getElementById('e-advance').value.trim(),
     due_date: due,
     notes: document.getElementById('e-notes').value.trim()
@@ -2201,13 +2435,33 @@ function saveEdit(){
 }
 
 function confirmDelete(){
-  if(!confirm('Delete ' + POID + '? This permanently removes the PO and all timeline events.')) return;
+  document.getElementById('del-err').style.display = 'none';
+  document.getElementById('del-modal').classList.add('open');
+}
+function closeDelModal(){ document.getElementById('del-modal').classList.remove('open'); }
+function delBgClick(e){ if(e.target === document.getElementById('del-modal')) closeDelModal(); }
+
+function executeDelete(){
+  var errEl = document.getElementById('del-err');
+  errEl.style.display = 'none';
+  var btn = document.getElementById('del-btn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
   fetch('/api/sc/po/' + encodeURIComponent(POID), {method: 'DELETE'})
     .then(function(r){ return r.json(); })
     .then(function(data){
-      if(data.success){ window.location.href = '/supply-chain'; }
-      else { alert('Delete failed: ' + (data.error || 'Unknown error')); }
-    }).catch(function(e){ alert('Delete failed: ' + e.message); });
+      if(data.success || data.error === undefined){
+        window.location.href = '/supply-chain';
+      } else {
+        errEl.textContent = 'Delete failed: ' + (data.error || 'Unknown error');
+        errEl.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Delete PO';
+      }
+    }).catch(function(e){
+      errEl.textContent = 'Delete failed: ' + e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Delete PO';
+    });
 }
 
 function openReceiveModal(){
@@ -2238,6 +2492,62 @@ function submitReceiveStock(){
   }).catch(function(e){ err.innerHTML = 'Failed: ' + esc(e.message); err.classList.add('show'); });
 }
 
+/* ── supplier search (edit form) ─────────────────────────────────────────── */
+var editSupTimer = null;
+var editSupList = [];
+
+function onEditSupplierSearch(){
+  var q = document.getElementById('e-supplier').value.trim();
+  document.getElementById('e-supplier-id').value = '';
+  if(editSupTimer) clearTimeout(editSupTimer);
+  editSupTimer = setTimeout(function(){ doEditSupSearch(q); }, 220);
+}
+
+function doEditSupSearch(q){
+  fetch('/api/sc/suppliers/search?q=' + encodeURIComponent(q))
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      editSupList = Array.isArray(data) ? data : [];
+      renderEditSupResults(q);
+    }).catch(function(){ editSupList = []; });
+}
+
+function renderEditSupResults(q){
+  var box = document.getElementById('e-supplier-results');
+  if(!box) return;
+  var h = '';
+  for(var i=0; i<editSupList.length; i++){
+    var s = editSupList[i];
+    h += '<div class="picker-item" onclick="pickEditSupplier(' + i + ')">'
+       + '<div class="pi-name">' + esc(s.name) + '</div>'
+       + '<div class="pi-meta">' + (s.location ? esc(s.location) + ' &middot; ' : '') + 'Score: ' + (parseFloat(s.reliability_score||5).toFixed(1)) + '/10</div>'
+       + '</div>';
+  }
+  if(!h && q){
+    h = '<div class="picker-item" onclick="document.getElementById(\'e-supplier-results\').classList.remove(\'open\')">'
+      + '<div class="pi-name" style="color:#085041">+ Create &ldquo;' + esc(q) + '&rdquo;</div>'
+      + '<div class="pi-meta">New supplier will be created when saved</div>'
+      + '</div>';
+  }
+  if(h){ box.innerHTML = h; box.classList.add('open'); }
+  else  { box.classList.remove('open'); }
+}
+
+function pickEditSupplier(i){
+  var s = editSupList[i];
+  if(!s) return;
+  document.getElementById('e-supplier').value = s.name;
+  document.getElementById('e-supplier-id').value = s.id;
+  document.getElementById('e-supplier-results').classList.remove('open');
+}
+
+document.addEventListener('click', function(e){
+  var box = document.getElementById('e-supplier-results');
+  var inp = document.getElementById('e-supplier');
+  if(box && inp && !box.contains(e.target) && e.target !== inp)
+    box.classList.remove('open');
+});
+
 loadPo();
 </script>
 
@@ -2250,12 +2560,15 @@ loadPo();
     </div>
     <div class="modal-body">
       <div class="form-err" id="edit-err"></div>
-      <div class="field"><label>Product Name *</label><input id="e-product" type="text" placeholder="e.g. Winter Hoodie"></div>
-      <div class="field"><label>SKU (optional)</label><input id="e-sku" type="text" placeholder="e.g. HOOD-CHAR-M"></div>
-      <div class="field"><label>Supplier</label><input id="e-supplier" type="text" placeholder="Supplier name"></div>
-      <div class="row2">
-        <div class="field"><label>Quantity *</label><input id="e-qty" type="number" min="1" placeholder="0"></div>
-        <div class="field"><label>Unit Cost (BDT)</label><input id="e-cost" type="number" min="0" step="0.01" placeholder="0"></div>
+      <!-- Size matrix (populated from po_products) -->
+      <div id="e-matrix"></div>
+      <div class="field" style="position:relative">
+        <label>Supplier</label>
+        <input id="e-supplier" type="text" autocomplete="off"
+               placeholder="Search or type new supplier name&hellip;"
+               oninput="onEditSupplierSearch()" onfocus="onEditSupplierSearch()">
+        <input id="e-supplier-id" type="hidden">
+        <div id="e-supplier-results" class="picker-results"></div>
       </div>
       <div class="row2">
         <div class="field"><label>Advance Paid (BDT)</label><input id="e-advance" type="number" min="0" step="0.01" placeholder="0"></div>
@@ -2285,5 +2598,32 @@ loadPo();
     </div>
   </div>
 </div>
+
+<!-- Delete PO confirmation modal -->
+<div class="modal-bg" id="del-modal" onclick="delBgClick(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Delete Purchase Order</h3>
+      <button class="modal-close" onclick="closeDelModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="del-confirm-box">
+        <p>Delete <span class="del-id" id="del-po-label"></span>?</p>
+        <p style="margin-top:6px">This cannot be undone. The PO and all its timeline events will be permanently removed.</p>
+      </div>
+      <div id="del-err" style="color:#791F1F;background:#FCEBEB;border:0.5px solid #F09595;border-radius:8px;padding:8px 11px;font-size:11px;margin-bottom:12px;display:none"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="closeDelModal()">Cancel</button>
+        <button class="btn btn-danger" id="del-btn" onclick="executeDelete()"
+                style="background:#FCEBEB;color:#791F1F;border-color:#F5C6C6">&#128465; Delete PO</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Populate delete modal label once POID is known
+(function(){ document.getElementById('del-po-label').textContent = POID; })();
+</script>
 </body>
 </html>"""

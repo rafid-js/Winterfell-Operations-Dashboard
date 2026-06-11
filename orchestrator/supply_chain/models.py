@@ -76,6 +76,50 @@ def _extract_size_label(product_name, raw_size):
     return (product_name or '—')
 
 
+# ── migration guard: po_status_display column ───────────────────────────────
+# The column was added in inventory_setup + supply_chain_setup Phase-2
+# migrations.  Guard against the edge case where the migration hasn't been run
+# yet so that delete / status-update operations don't crash the main flow.
+
+_rq_display_col_exists: bool | None = None   # process-level cache
+
+
+def _has_rq_display_col(conn) -> bool:
+    global _rq_display_col_exists
+    if _rq_display_col_exists is None:
+        r = conn.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'reorder_queue'
+              AND column_name = 'po_status_display'
+        """)).fetchone()
+        _rq_display_col_exists = r is not None
+    return _rq_display_col_exists
+
+
+def _rq_clear_po(conn, po_id: str) -> None:
+    """Set reorder_queue po_created=FALSE, po_id=NULL for a given po_id."""
+    if _has_rq_display_col(conn):
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
+            WHERE po_id = :po_id
+        """), {'po_id': po_id})
+    else:
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_created = FALSE, po_id = NULL
+            WHERE po_id = :po_id
+        """), {'po_id': po_id})
+
+
+def _rq_set_po_display(conn, po_id: str, display: str) -> None:
+    """Update po_status_display on the reorder_queue row linked to a PO."""
+    if not _has_rq_display_col(conn):
+        return
+    conn.execute(text("""
+        UPDATE reorder_queue SET po_status_display = :disp WHERE po_id = :po_id
+    """), {'disp': display, 'po_id': po_id})
+
 
 # ── serialisation helpers ───────────────────────────────────────────────────
 
@@ -213,6 +257,20 @@ def get_suppliers():
         rows = conn.execute(text("""
             SELECT * FROM suppliers ORDER BY name ASC
         """)).fetchall()
+    return _rows_to_list(rows)
+
+
+def search_suppliers(q, limit=10):
+    """Search suppliers by name fragment, ordered by preferred/score/name."""
+    like = '%' + (q or '').strip() + '%'
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT id, name, location, reliability_score
+            FROM suppliers
+            WHERE name ILIKE :like
+            ORDER BY is_preferred DESC, reliability_score DESC NULLS LAST, name ASC
+            LIMIT :limit
+        """), {'like': like, 'limit': int(limit)}).fetchall()
     return _rows_to_list(rows)
 
 
@@ -599,85 +657,131 @@ def recalculate_po_status(conn, po_id):
         WHERE po_id = :po_id
     """), {'status': new_status, 'po_id': po_id})
 
-    # FIX 3: keep reorder_queue in sync with every po_status change.
+    # Sync reorder_queue with the new PO status.
     if new_status in ('Completed', 'Cancelled'):
-        conn.execute(text("""
-            UPDATE reorder_queue
-            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
-            WHERE po_id = :po_id
-        """), {'po_id': po_id})
+        _rq_clear_po(conn, po_id)
     else:
-        conn.execute(text("""
-            UPDATE reorder_queue
-            SET po_status_display = :disp
-            WHERE po_id = :po_id
-        """), {'disp': 'PO ' + new_status, 'po_id': po_id})
+        _rq_set_po_display(conn, po_id, 'PO ' + new_status)
 
     return new_status
 
 
 def update_po(po_id, data):
-    """Update editable fields of a PO."""
-    product_name = (data.get('product_name') or '').strip()
-    if not product_name:
-        raise ValueError('Product name is required')
-    try:
-        quantity = int(data.get('quantity_ordered') or 0)
-    except (TypeError, ValueError):
-        raise ValueError('Quantity must be a number')
-    if quantity <= 0:
-        raise ValueError('Quantity must be greater than zero')
+    """
+    Update editable fields of a PO.
+
+    Accepts either the multi-product shape (data['products']) or the legacy
+    flat shape (product_name / quantity_ordered / unit_cost_bdt). When
+    products are supplied the size_breakdown and po_products columns are also
+    updated, mirroring the create flow.
+    """
     due_date = data.get('due_date')
     if not due_date:
         raise ValueError('Due date is required')
-    unit_cost = data.get('unit_cost_bdt')
-    unit_cost = float(unit_cost) if unit_cost not in (None, '') else 0.0
     advance_paid = data.get('advance_paid_bdt')
     advance_paid = float(advance_paid) if advance_paid not in (None, '') else 0.0
-    total_cost = unit_cost * quantity
-    balance_due = total_cost - advance_paid
-    sku = data.get('sku') or None
-    if sku == '':
-        sku = None
     notes = data.get('notes') or None
-    with get_connection() as conn:
-        supplier_id = None
-        if (data.get('supplier_name') or '').strip():
-            supplier_id = _upsert_supplier(conn, {'name': data['supplier_name']})
-        conn.execute(text("""
-            UPDATE purchase_orders
-            SET product_name     = :product_name,
-                sku              = :sku,
-                supplier_id      = COALESCE(:supplier_id, supplier_id),
-                quantity_ordered = :quantity,
-                unit_cost_bdt    = :unit_cost,
-                total_cost_bdt   = :total_cost,
-                advance_paid_bdt = :advance_paid,
-                balance_due_bdt  = :balance_due,
-                due_date         = :due_date,
-                expected_delivery= :due_date2,
-                notes            = :notes,
-                updated_at       = NOW()
-            WHERE po_id = :po_id
-        """), {
-            'product_name': product_name, 'sku': sku, 'supplier_id': supplier_id,
-            'quantity': quantity, 'unit_cost': unit_cost, 'total_cost': total_cost,
-            'advance_paid': advance_paid, 'balance_due': balance_due,
-            'due_date': due_date, 'due_date2': due_date, 'notes': notes, 'po_id': po_id,
-        })
-        conn.commit()
+
+    if data.get('products'):
+        prods = _normalize_po_products(data)
+        total_qty = sum(p['quantity'] for p in prods)
+        total_cost = round(sum(p['total_cost_bdt'] for p in prods), 2)
+        unit_cost = round(total_cost / total_qty, 2) if total_qty else 0.0
+        balance_due = total_cost - advance_paid
+        first = prods[0]
+        product_name = (first['product_name'] + ' + ' + str(len(prods) - 1) + ' more'
+                        if len(prods) > 1 else first['product_name'])
+        sku = first['sku']
+        with get_connection() as conn:
+            supplier_id = data.get('supplier_id') or None
+            if supplier_id in ('', None) and (data.get('supplier_name') or '').strip():
+                supplier_id = _upsert_supplier(conn, {'name': data['supplier_name']})
+            store_breakdown = _has_column(conn, 'purchase_orders', 'size_breakdown')
+            store_products = _has_column(conn, 'purchase_orders', 'po_products')
+            extra = ''
+            extra_params: dict = {}
+            if store_breakdown and first.get('size_breakdown') is not None:
+                extra += ', size_breakdown = CAST(:sb AS JSONB)'
+                extra_params['sb'] = json.dumps(first['size_breakdown'])
+            if store_products:
+                extra += ', po_products = CAST(:pp AS JSONB)'
+                extra_params['pp'] = json.dumps(prods)
+            conn.execute(text("""
+                UPDATE purchase_orders SET
+                    product_name     = :product_name,
+                    sku              = :sku,
+                    supplier_id      = COALESCE(:supplier_id, supplier_id),
+                    quantity_ordered = :quantity,
+                    unit_cost_bdt    = :unit_cost,
+                    total_cost_bdt   = :total_cost,
+                    advance_paid_bdt = :advance_paid,
+                    balance_due_bdt  = :balance_due,
+                    due_date         = :due_date,
+                    expected_delivery= :due_date2,
+                    notes            = :notes,
+                    updated_at       = NOW()""" + extra + """
+                WHERE po_id = :po_id
+            """), {
+                'product_name': product_name, 'sku': sku,
+                'supplier_id': supplier_id,
+                'quantity': total_qty, 'unit_cost': unit_cost, 'total_cost': total_cost,
+                'advance_paid': advance_paid, 'balance_due': balance_due,
+                'due_date': due_date, 'due_date2': due_date,
+                'notes': notes, 'po_id': po_id,
+                **extra_params,
+            })
+            conn.commit()
+    else:
+        product_name = (data.get('product_name') or '').strip()
+        if not product_name:
+            raise ValueError('Product name is required')
+        try:
+            quantity = int(data.get('quantity_ordered') or 0)
+        except (TypeError, ValueError):
+            raise ValueError('Quantity must be a number')
+        if quantity <= 0:
+            raise ValueError('Quantity must be greater than zero')
+        unit_cost = data.get('unit_cost_bdt')
+        unit_cost = float(unit_cost) if unit_cost not in (None, '') else 0.0
+        total_cost = unit_cost * quantity
+        balance_due = total_cost - advance_paid
+        sku = data.get('sku') or None
+        if sku == '':
+            sku = None
+        with get_connection() as conn:
+            supplier_id = None
+            if (data.get('supplier_name') or '').strip():
+                supplier_id = _upsert_supplier(conn, {'name': data['supplier_name']})
+            conn.execute(text("""
+                UPDATE purchase_orders SET
+                    product_name     = :product_name,
+                    sku              = :sku,
+                    supplier_id      = COALESCE(:supplier_id, supplier_id),
+                    quantity_ordered = :quantity,
+                    unit_cost_bdt    = :unit_cost,
+                    total_cost_bdt   = :total_cost,
+                    advance_paid_bdt = :advance_paid,
+                    balance_due_bdt  = :balance_due,
+                    due_date         = :due_date,
+                    expected_delivery= :due_date2,
+                    notes            = :notes,
+                    updated_at       = NOW()
+                WHERE po_id = :po_id
+            """), {
+                'product_name': product_name, 'sku': sku,
+                'supplier_id': supplier_id,
+                'quantity': quantity, 'unit_cost': unit_cost, 'total_cost': total_cost,
+                'advance_paid': advance_paid, 'balance_due': balance_due,
+                'due_date': due_date, 'due_date2': due_date,
+                'notes': notes, 'po_id': po_id,
+            })
+            conn.commit()
 
 
 def delete_po(po_id):
-    """Delete a PO and all its timeline events, and clear the inventory link."""
+    """Delete a PO, its timeline events, and clear the inventory link."""
     with get_connection() as conn:
-        # Clear inventory link before the row is deleted (belt-and-suspenders;
-        # the FK ON DELETE SET NULL + trigger also handles this automatically).
-        conn.execute(text("""
-            UPDATE reorder_queue
-            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
-            WHERE po_id = :po_id
-        """), {'po_id': po_id})
+        _rq_clear_po(conn, po_id)             # clear inventory link first
         conn.execute(text("DELETE FROM po_timeline WHERE po_id = :po_id"), {'po_id': po_id})
         conn.execute(text("DELETE FROM purchase_orders WHERE po_id = :po_id"), {'po_id': po_id})
         conn.commit()
@@ -849,13 +953,8 @@ def receive_po_stock(po_id, data):
                 WHERE id = :sid
             """), {'sid': supplier_id})
 
-        # FIX 3: Stock arrived — clear the PO link from reorder_queue so the
-        # next engine run recalculates the SKU's need with the new stock level.
-        conn.execute(text("""
-            UPDATE reorder_queue
-            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
-            WHERE po_id = :po_id
-        """), {'po_id': po_id})
+        # Stock arrived — clear PO link so next engine run recalculates need.
+        _rq_clear_po(conn, po_id)
 
         conn.commit()
 
@@ -864,13 +963,18 @@ def receive_po_stock(po_id, data):
 
 def get_waiting_orders(po_id):
     """
-    Return orders linked to this PO via linked_so_numbers.
-    Also returns a summary of units needed vs arriving.
+    Return waiting orders for this PO.
+
+    Strategy (union, de-duplicated by so_number):
+      1. Orders whose so_number is in linked_so_numbers (manually linked).
+      2. Orders that contain an order_items row whose sku starts with the PO's
+         sku (sku LIKE 'BASE%') OR whose product_name matches the PO's product.
+         Only orders with a waiting status (Pending / On Hold / Requested).
     """
     with get_connection() as conn:
         po_row = conn.execute(text("""
             SELECT po_id, product_name, sku, quantity_ordered,
-                   quantity_received, linked_so_numbers
+                   quantity_received, linked_so_numbers, size_breakdown
             FROM purchase_orders WHERE po_id = :po_id
         """), {'po_id': po_id}).fetchone()
         if po_row is None:
@@ -878,24 +982,73 @@ def get_waiting_orders(po_id):
         po = _row_to_dict(po_row)
 
         linked = po.get('linked_so_numbers') or []
-        orders = []
-        if linked:
-            rows = conn.execute(text("""
-                SELECT so_number, customer_name, customer_phone,
-                       total_receivable, nuport_status, payment_status,
-                       order_date,
-                       EXTRACT(DAY FROM NOW() - order_date)::INTEGER AS days_waiting
-                FROM orders
-                WHERE so_number = ANY(:so_list)
-                ORDER BY order_date ASC
-            """), {'so_list': linked}).fetchall()
-            orders = _rows_to_list(rows)
+        sku_base = (po.get('sku') or '').strip()
+        # Strip "+N more" suffix from multi-product PO names.
+        product_name = (po.get('product_name') or '').split(' + ')[0].strip()
+        # Strip size suffix to get base name.
+        product_base = _SIZE_RE_PY.sub('', product_name).strip()
+
+        waiting_cond = """(
+            UPPER(COALESCE(o.nuport_status,'')) IN ('PENDING','REQUESTED')
+            OR o.nuport_status ILIKE 'on%hold'
+        )"""
+
+        # Build UNION of linked + auto-matched waiting orders.
+        params: dict = {
+            'so_list': linked if linked else ['__NO_MATCH__'],
+            'pname': '%' + product_base + '%' if product_base else '__NO_MATCH__',
+            'sku_like': sku_base + '%' if sku_base else '__NO_MATCH__',
+        }
+        rows = conn.execute(text(f"""
+            SELECT DISTINCT ON (o.so_number)
+                o.so_number, o.customer_name, o.customer_phone,
+                o.total_receivable, o.nuport_status, o.payment_status,
+                o.order_date,
+                EXTRACT(DAY FROM NOW() - o.order_date)::INTEGER AS days_waiting,
+                COALESCE(oi.sku,'') AS item_sku,
+                COALESCE(oi.product_name,'') AS item_product,
+                CASE WHEN o.so_number = ANY(:so_list) THEN 1 ELSE 0 END AS is_linked
+            FROM orders o
+            LEFT JOIN order_items oi ON oi.so_number = o.so_number
+            WHERE
+              o.so_number = ANY(:so_list)
+              OR (
+                {waiting_cond}
+                AND (
+                  oi.sku LIKE :sku_like
+                  OR TRIM(regexp_replace(COALESCE(oi.product_name,''), :re, '', 'i')) ILIKE :pname
+                )
+              )
+            ORDER BY o.so_number, o.order_date ASC
+        """), {**params, 're': _SIZE_RE_SQL}).fetchall()
+        orders = _rows_to_list(rows)
+        # Sort: linked first, then oldest first.
+        orders.sort(key=lambda x: (-x.get('is_linked', 0), x.get('order_date') or ''))
+
+    # Size breakdown for "by_size" summary.
+    sb = po.get('size_breakdown')
+    if isinstance(sb, str):
+        try:
+            sb = json.loads(sb)
+        except Exception:
+            sb = None
+    by_size = {}
+    if isinstance(sb, list):
+        for entry in sb:
+            sz = (entry.get('size') or '').strip()
+            if sz:
+                by_size[sz] = entry.get('qty') or 0
 
     return {
         'po': po,
+        'by_size': by_size,
         'orders': orders,
         'order_count': len(orders),
-        'revenue_held': sum((o.get('total_receivable') or 0) for o in orders),
+        'revenue_held': sum(float(o.get('total_receivable') or 0) for o in orders),
+        'avg_days_waiting': (
+            round(sum(o.get('days_waiting') or 0 for o in orders) / len(orders))
+            if orders else 0
+        ),
     }
 
 
