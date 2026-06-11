@@ -41,7 +41,7 @@ _QUERY = text("""
     WHERE """ + models.delivered_sql() + """
       AND o.order_date >= NOW() - INTERVAL '180 days'
       AND oi.product_name IS NOT NULL
-    GROUP BY category, product_name, raw_size
+    GROUP BY 1, 2, 3
 """)
 
 _INSERT = text("""
