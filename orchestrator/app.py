@@ -39,6 +39,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from supply_chain import sc_bp
 app.register_blueprint(sc_bp)
 
+# ── Inventory blueprint ─────────────────────────────────────────────────────
+from inventory import inv_bp
+app.register_blueprint(inv_bp)
+
 DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'winterfell')
 
 # Maps script_name → cron module path
@@ -601,6 +605,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -614,6 +619,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <a href="/products">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
@@ -895,6 +901,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/products" class="nav-link active">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -908,6 +915,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/products" class="active">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
@@ -1314,6 +1322,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link active">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -1327,6 +1336,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/products">Products</a>
     <a href="/customers" class="active">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
@@ -1717,6 +1727,7 @@ tbody td.r{text-align:right;white-space:nowrap}
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link active">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -1730,6 +1741,7 @@ tbody td.r{text-align:right;white-space:nowrap}
     <a href="/products">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders" class="active">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
