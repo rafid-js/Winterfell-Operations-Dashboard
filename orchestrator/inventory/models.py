@@ -130,6 +130,32 @@ def _rows_to_list(rows):
     return [_row_to_dict(r) for r in rows]
 
 
+# ── product images ────────────────────────────────────────────────────────────
+def _image_map(conn):
+    """Map base product name -> image_url, grouped exactly like the Products
+    module (strip the size suffix, take the first non-null image per base)."""
+    rows = conn.execute(text("""
+        SELECT
+          TRIM(regexp_replace(product_name, :re, '', 'i')) AS base_name,
+          MIN(image_url) AS image_url
+        FROM skus
+        WHERE image_url IS NOT NULL AND image_url <> ''
+          AND product_name IS NOT NULL
+        GROUP BY base_name
+    """), {'re': _SIZE_RE_SQL}).fetchall()
+    return {r._mapping['base_name']: r._mapping['image_url'] for r in rows}
+
+
+def _attach_images(conn, rows, key='sku_base'):
+    """Add an image_url field to each dict row, matched on its base name."""
+    if not rows:
+        return rows
+    imgs = _image_map(conn)
+    for r in rows:
+        r['image_url'] = imgs.get(r.get(key)) or imgs.get(base_name(r.get('product_name') or ''))
+    return rows
+
+
 # ── reads (UI + bridge) ───────────────────────────────────────────────────────
 def get_reorder_queue(urgency=None, include_suppressed=False):
     """Reorder rows, optionally filtered by urgency. Suppressed rows excluded by default."""
@@ -151,7 +177,7 @@ def get_reorder_queue(urgency=None, include_suppressed=False):
               days_until_stockout ASC NULLS LAST,
               total_waiting_orders DESC
         """), params).fetchall()
-    return _rows_to_list(rows)
+        return _attach_images(conn, _rows_to_list(rows))
 
 
 def get_suppressed():
@@ -160,7 +186,7 @@ def get_suppressed():
             SELECT * FROM reorder_queue WHERE suppressed = TRUE
             ORDER BY kill_chain_score DESC NULLS LAST
         """)).fetchall()
-    return _rows_to_list(rows)
+        return _attach_images(conn, _rows_to_list(rows))
 
 
 def get_stock_health():
@@ -174,7 +200,7 @@ def get_stock_health():
                 WHEN 'Monitor' THEN 3 WHEN 'Healthy' THEN 4 ELSE 5 END,
               product_name ASC
         """)).fetchall()
-    return _rows_to_list(rows)
+        return _attach_images(conn, _rows_to_list(rows))
 
 
 def get_dead_stock():
@@ -189,7 +215,7 @@ def get_dead_stock():
                 WHEN 'Markdown' THEN 4 WHEN 'Watch' THEN 5 ELSE 6 END,
               kill_chain_score DESC NULLS LAST
         """)).fetchall()
-    return _rows_to_list(rows)
+        return _attach_images(conn, _rows_to_list(rows))
 
 
 def get_metrics():
@@ -248,6 +274,9 @@ def get_po_prefill(sku_base):
         sizes = list((r.get('size_breakdown') or {}).keys())
         sizes.sort(key=size_sort_key)
 
+        imgs = _image_map(conn)
+        image_url = imgs.get(sku_base) or imgs.get(base_name(r.get('product_name') or ''))
+
     lead = (supplier or {}).get('avg_lead_days') or DEFAULT_LEAD_TIME_DAYS
     try:
         from datetime import timedelta
@@ -258,6 +287,7 @@ def get_po_prefill(sku_base):
     return {
         'sku_base': r.get('sku_base'),
         'product_name': r.get('product_name'),
+        'image_url': image_url,
         'category': r.get('category'),
         'size_type': size_type_for(sizes),
         'sizes': sizes,
