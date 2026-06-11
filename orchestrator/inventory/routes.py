@@ -109,6 +109,16 @@ def api_batch_type():
         return jsonify({'error': str(e)}), 500
 
 
+@inv_bp.route('/api/inventory/reorder/<path:sku_base>/clear-po', methods=['PATCH'])
+@inv_login_required
+def api_clear_po(sku_base):
+    try:
+        models.clear_po_link(sku_base)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @inv_bp.route('/api/inventory/reorder/<path:sku_base>/mark-po', methods=['POST'])
 @inv_login_required
 def api_mark_po(sku_base):
@@ -510,8 +520,16 @@ function renderReorder(){
   listEl.innerHTML=h;
 }
 function qrow(r){
-  var btn=r.po_created
-    ? '<a class="btn btn-ghost" href="/supply-chain/po/'+encodeURIComponent(r.po_id)+'">View '+esc(r.po_id)+' &#8599;</a>'
+  var poVerified=r.po_created && r.verified_po_id;
+  if(r.po_created && !r.verified_po_id){
+    // Stale reference — PO was deleted; silently clear in background.
+    fetch('/api/inventory/reorder/'+encodeURIComponent(r.sku_base)+'/clear-po',{method:'PATCH'});
+  }
+  var poLabel=poVerified
+    ? ('View '+esc(r.po_id)+(r.po_status_display?' &middot; '+esc(r.po_status_display):'')+' &#8599;')
+    : '';
+  var btn=poVerified
+    ? '<a class="btn btn-ghost" href="/supply-chain/po/'+encodeURIComponent(r.po_id)+'">'+poLabel+'</a>'
     : '<a class="btn btn-primary" href="/supply-chain?prefill='+encodeURIComponent(r.sku_base)+'">Create PO &#8599;</a>';
   var sub='';
   if(r.days_until_stockout!=null)sub+='Stockout in '+r.days_until_stockout+'d';

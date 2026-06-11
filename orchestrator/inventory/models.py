@@ -158,24 +158,31 @@ def _attach_images(conn, rows, key='sku_base'):
 
 # ── reads (UI + bridge) ───────────────────────────────────────────────────────
 def get_reorder_queue(urgency=None, include_suppressed=False):
-    """Reorder rows, optionally filtered by urgency. Suppressed rows excluded by default."""
+    """Reorder rows, optionally filtered by urgency. Suppressed rows excluded by default.
+    Each row includes verified_po_id (NULL when the linked PO no longer exists)."""
     clauses = []
     params = {}
     if not include_suppressed:
-        clauses.append("suppressed = FALSE")
+        clauses.append("rq.suppressed = FALSE")
     if urgency:
-        clauses.append("LOWER(urgency) = :urg")
+        clauses.append("LOWER(rq.urgency) = :urg")
         params['urg'] = urgency.lower()
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with get_connection() as conn:
         rows = conn.execute(text("""
-            SELECT * FROM reorder_queue""" + where + """
+            SELECT rq.*,
+                   po.po_id        AS verified_po_id,
+                   po.po_status    AS live_po_status,
+                   po.current_stage AS po_stage
+            FROM reorder_queue rq
+            LEFT JOIN purchase_orders po ON rq.po_id = po.po_id
+            """ + where + """
             ORDER BY
-              CASE urgency
+              CASE rq.urgency
                 WHEN 'Critical' THEN 1 WHEN 'Rush' THEN 2
                 WHEN 'Monitor' THEN 3 WHEN 'Healthy' THEN 4 ELSE 5 END,
-              days_until_stockout ASC NULLS LAST,
-              total_waiting_orders DESC
+              rq.days_until_stockout ASC NULLS LAST,
+              rq.total_waiting_orders DESC
         """), params).fetchall()
         return _attach_images(conn, _rows_to_list(rows))
 
@@ -385,6 +392,19 @@ def mark_po_created(sku_base, po_id):
             UPDATE reorder_queue SET po_created = TRUE, po_id = :pid
             WHERE sku_base = :b
         """), {'pid': po_id, 'b': sku_base})
+        conn.commit()
+
+
+def clear_po_link(sku_base):
+    """Clear a stale PO reference (PO deleted externally or never existed)."""
+    with get_connection() as conn:
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
+            WHERE sku_base = :b
+              AND (po_id IS NULL
+                   OR po_id NOT IN (SELECT po_id FROM purchase_orders))
+        """), {'b': sku_base})
         conn.commit()
 
 

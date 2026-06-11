@@ -599,6 +599,20 @@ def recalculate_po_status(conn, po_id):
         WHERE po_id = :po_id
     """), {'status': new_status, 'po_id': po_id})
 
+    # FIX 3: keep reorder_queue in sync with every po_status change.
+    if new_status in ('Completed', 'Cancelled'):
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
+            WHERE po_id = :po_id
+        """), {'po_id': po_id})
+    else:
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_status_display = :disp
+            WHERE po_id = :po_id
+        """), {'disp': 'PO ' + new_status, 'po_id': po_id})
+
     return new_status
 
 
@@ -655,8 +669,15 @@ def update_po(po_id, data):
 
 
 def delete_po(po_id):
-    """Delete a PO and all its timeline events."""
+    """Delete a PO and all its timeline events, and clear the inventory link."""
     with get_connection() as conn:
+        # Clear inventory link before the row is deleted (belt-and-suspenders;
+        # the FK ON DELETE SET NULL + trigger also handles this automatically).
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
+            WHERE po_id = :po_id
+        """), {'po_id': po_id})
         conn.execute(text("DELETE FROM po_timeline WHERE po_id = :po_id"), {'po_id': po_id})
         conn.execute(text("DELETE FROM purchase_orders WHERE po_id = :po_id"), {'po_id': po_id})
         conn.commit()
@@ -827,6 +848,14 @@ def receive_po_stock(po_id, data):
                     updated_at = NOW()
                 WHERE id = :sid
             """), {'sid': supplier_id})
+
+        # FIX 3: Stock arrived — clear the PO link from reorder_queue so the
+        # next engine run recalculates the SKU's need with the new stock level.
+        conn.execute(text("""
+            UPDATE reorder_queue
+            SET po_created = FALSE, po_id = NULL, po_status_display = NULL
+            WHERE po_id = :po_id
+        """), {'po_id': po_id})
 
         conn.commit()
 

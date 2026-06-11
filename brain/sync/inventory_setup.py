@@ -135,6 +135,53 @@ INSERT INTO system_status (script_name, display_name, schedule) VALUES
 ON CONFLICT (script_name) DO NOTHING;
 """
 
+# Inventory ↔ Supply Chain two-way sync (safe to re-run).
+PO_SYNC_SQL = [
+    # FIX 6: PO status display column on reorder_queue.
+    "ALTER TABLE reorder_queue ADD COLUMN IF NOT EXISTS po_status_display VARCHAR(30);",
+
+    # Immediate fix: clear any orphan PO references before adding the FK.
+    """UPDATE reorder_queue
+       SET po_created = FALSE, po_id = NULL
+       WHERE po_id IS NOT NULL
+         AND po_id NOT IN (SELECT po_id FROM purchase_orders);""",
+
+    # FIX 1b: FK with ON DELETE SET NULL so deleting a PO auto-clears the link.
+    """DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'fk_rq_po'
+          AND table_name      = 'reorder_queue'
+      ) THEN
+        ALTER TABLE reorder_queue
+          ADD CONSTRAINT fk_rq_po
+          FOREIGN KEY (po_id)
+          REFERENCES purchase_orders(po_id)
+          ON DELETE SET NULL;
+      END IF;
+    END $$;""",
+
+    # FIX 1c+d: Trigger that resets po_created whenever po_id is cleared.
+    """CREATE OR REPLACE FUNCTION reset_po_created()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.po_id IS NULL THEN
+        NEW.po_created        := FALSE;
+        NEW.po_status_display := NULL;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;""",
+
+    "DROP TRIGGER IF EXISTS trg_reset_po_created ON reorder_queue;",
+
+    """CREATE TRIGGER trg_reset_po_created
+       BEFORE UPDATE ON reorder_queue
+       FOR EACH ROW
+       EXECUTE FUNCTION reset_po_created();""",
+]
+
 
 def run():
     with get_connection() as conn:
@@ -157,6 +204,10 @@ def run():
 
         print("Seeding system_status (inventory crons) ...")
         conn.execute(text(SYSTEM_STATUS_SQL))
+
+        print("Adding PO sync FK + trigger ...")
+        for stmt in PO_SYNC_SQL:
+            conn.execute(text(stmt))
 
         conn.commit()
     print("Inventory migration complete.")
