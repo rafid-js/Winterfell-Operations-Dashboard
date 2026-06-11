@@ -989,15 +989,18 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
         """), {'skus': skus}).fetchall()
         sales_map = {r._mapping['sku']: int(r._mapping['qty'] or 0) for r in sales_rows}
 
-        # Waiting orders — only Pending and On Hold (incl. "On Hold (Pre-orders)" etc.)
+        # Waiting orders — only Pending and On Hold count.
+        # Status values in the DB are like 'PENDING', 'REQUESTED', 'ON_HOLD'
+        # (underscore, not space). These patterns mirror the Orders module
+        # definitions in app.py so the numbers match the dashboard exactly.
         wait_rows = conn.execute(text("""
             SELECT oi.sku, COALESCE(SUM(oi.quantity), 0) AS qty
             FROM order_items oi
             JOIN orders o ON o.so_number = oi.so_number
             WHERE oi.sku = ANY(:skus)
               AND (
-                COALESCE(o.nuport_status, '') ILIKE 'pending'
-                OR COALESCE(o.nuport_status, '') ILIKE 'on hold%'
+                UPPER(COALESCE(o.nuport_status, '')) IN ('PENDING', 'REQUESTED')
+                OR COALESCE(o.nuport_status, '') ILIKE 'on%hold'
               )
             GROUP BY oi.sku
         """), {'skus': skus}).fetchall()
