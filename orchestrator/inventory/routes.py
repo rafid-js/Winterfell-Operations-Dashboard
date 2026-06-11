@@ -321,14 +321,25 @@ function sizeGrid(row){
 function loadStock(p){
   fetch('/api/inventory/stock-health').then(function(r){return r.json();}).then(function(rows){
     if(rows.error){p.innerHTML='<div class="empty">'+esc(rows.error)+'</div>';return;}
-    window._stock=rows;renderStock();
+    window._stock=rows;
+    p.innerHTML='<input id="q" class="search" placeholder="Search product or SKU..." oninput="renderStock()">'
+               +'<div id="stock-list"></div>';
+    renderStock();
   }).catch(function(e){p.innerHTML='<div class="empty">Failed: '+esc(e.message)+'</div>';});
 }
 function renderStock(){
-  var rows=window._stock||[],q=(document.getElementById('q')?document.getElementById('q').value:'').toLowerCase();
-  var h='<input id="q" class="search" placeholder="Search product or SKU..." oninput="renderStock()" value="'+esc(q)+'">';
+  var rows=window._stock||[];
+  var qEl=document.getElementById('q'),q=qEl?qEl.value.toLowerCase():'';
   var list=rows.filter(function(r){return !q||(r.product_name||'').toLowerCase().indexOf(q)>=0||(r.sku_base||'').toLowerCase().indexOf(q)>=0;});
-  if(!list.length){document.getElementById('panel').innerHTML=h+'<div class="empty">No SKUs. Run the reorder engine first.</div>';return;}
+  list.sort(function(a,b){
+    var sa=Object.values(a.sales_30d_breakdown||{}).reduce(function(t,v){return t+v;},0);
+    var sb=Object.values(b.sales_30d_breakdown||{}).reduce(function(t,v){return t+v;},0);
+    return sb-sa;
+  });
+  var listEl=document.getElementById('stock-list');
+  if(!listEl)return;
+  if(!list.length){listEl.innerHTML='<div class="empty">No SKUs. Run the reorder engine first.</div>';return;}
+  var h='';
   for(var i=0;i<list.length;i++){
     var r=list[i];
     h+='<div class="card '+uClass(r.urgency)+'"><div class="card-top"><div>'
@@ -340,7 +351,7 @@ function renderStock(){
       +'<div style="text-align:right"><div class="q-total">'+(r.recommended_total||0)+'</div><div class="c-sku">to order</div></div>'
       +'</div>'+sizeGrid(r)+'</div>';
   }
-  document.getElementById('panel').innerHTML=h;
+  listEl.innerHTML=h;
 }
 
 function loadReorder(p){
