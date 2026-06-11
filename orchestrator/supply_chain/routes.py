@@ -436,6 +436,7 @@ SC_SUPPLIERS_HTML = """<!doctype html>
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link active">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -449,6 +450,7 @@ SC_SUPPLIERS_HTML = """<!doctype html>
     <a href="/products">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain" class="active">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
@@ -688,6 +690,7 @@ SC_WAITING_ORDERS_HTML = """<!doctype html>
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link active">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -701,6 +704,7 @@ SC_WAITING_ORDERS_HTML = """<!doctype html>
     <a href="/products">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain" class="active">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
@@ -940,6 +944,7 @@ SC_LIST_HTML = """<!doctype html>
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link active">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -953,6 +958,7 @@ SC_LIST_HTML = """<!doctype html>
     <a href="/products">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain" class="active">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
@@ -1836,6 +1842,7 @@ SC_DETAIL_HTML = """<!doctype html>
     <a href="/products" class="nav-link">Products</a>
     <a href="/customers" class="nav-link">Customers</a>
     <a href="/orders" class="nav-link">Orders</a>
+    <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link active">Supply Chain</a>
   </nav>
   <div class="hdr-actions">
@@ -1849,6 +1856,7 @@ SC_DETAIL_HTML = """<!doctype html>
     <a href="/products">Products</a>
     <a href="/customers">Customers</a>
     <a href="/orders">Orders</a>
+    <a href="/inventory">Inventory</a>
     <a href="/supply-chain" class="active">Supply Chain</a>
     <a href="/logout">Logout</a>
   </nav>
