@@ -415,17 +415,39 @@ function sizeGrid(row){
   return h+'</div>';
 }
 
+var STOCK_FILTER='all';
+var STOCK_PILLS=[['all','All'],['Critical','Critical'],['Rush','Rush'],['Monitor','Monitor'],['Healthy','Healthy'],['Dead','Dead']];
+function stockPills(){
+  var rows=window._stock||[];
+  var counts={all:rows.length};
+  for(var i=0;i<rows.length;i++){var u=rows[i].urgency||'Healthy';counts[u]=(counts[u]||0)+1;}
+  var h='<div class="filters" id="stock-filters">';
+  for(var j=0;j<STOCK_PILLS.length;j++){
+    var key=STOCK_PILLS[j][0],lbl=STOCK_PILLS[j][1],n=counts[key]||0;
+    if(key!=='all'&&!n)continue;
+    h+='<button class="pill'+(STOCK_FILTER===key?' active':'')+'" onclick="setStockFilter(\\''+key+'\\')">'+esc(lbl)+' ('+n+')</button>';
+  }
+  return h+'</div>';
+}
+function setStockFilter(f){
+  STOCK_FILTER=f;
+  var fe=document.getElementById('stock-filters');if(fe)fe.outerHTML=stockPills();
+  renderStock();
+}
 function loadStock(p){
   fetch('/api/inventory/stock-health').then(function(r){return r.json();}).then(function(rows){
     if(rows.error){p.innerHTML='<div class="empty">'+esc(rows.error)+'</div>';return;}
     window._stock=rows;
-    p.innerHTML=searchBar('q-stock','renderStock')+'<div id="stock-list"></div>';
+    p.innerHTML=stockPills()+searchBar('q-stock','renderStock')+'<div id="stock-list"></div>';
     renderStock();
   }).catch(function(e){p.innerHTML='<div class="empty">Failed: '+esc(e.message)+'</div>';});
 }
 function renderStock(){
   var rows=window._stock||[],q=curQ('q-stock');
-  var list=rows.filter(function(r){return matchQ(r,q);});
+  var list=rows.filter(function(r){
+    if(STOCK_FILTER!=='all'&&(r.urgency||'Healthy')!==STOCK_FILTER)return false;
+    return matchQ(r,q);
+  });
   list.sort(function(a,b){
     var sa=Object.values(a.sales_30d_breakdown||{}).reduce(function(t,v){return t+v;},0);
     var sb=Object.values(b.sales_30d_breakdown||{}).reduce(function(t,v){return t+v;},0);
@@ -433,7 +455,10 @@ function renderStock(){
   });
   var listEl=document.getElementById('stock-list');
   if(!listEl)return;
-  if(!list.length){listEl.innerHTML='<div class="empty">No SKUs. Run the reorder engine first.</div>';return;}
+  if(!list.length){
+    var hasData=(window._stock||[]).length>0;
+    listEl.innerHTML='<div class="empty">'+(hasData?'No SKUs match this filter.':'No SKUs. Run the reorder engine first.')+'</div>';return;
+  }
   var h='';
   for(var i=0;i<list.length;i++){
     var r=list[i];

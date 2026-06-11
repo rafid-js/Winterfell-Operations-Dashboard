@@ -1,9 +1,10 @@
 """
 size_intelligence.py — learn the natural size curve per category.
 
-Runs weekly. From the last 180 days of DELIVERED sales it computes, for every
-category, the share each size takes of that category's volume. Future POs can
-then be split by the size ratios customers actually buy instead of a flat guess.
+Runs weekly. From the last 180 days of orders (ALL statuses — stockout demand
+often shows up as a cancelled/on-hold line) it computes, for every category,
+the share each size takes of that category's volume. Future POs can then be
+split by the size ratios customers actually demand instead of a flat guess.
 
 Writes size_profiles (full rebuild each run): one row per (category, size) with
 its distribution_pct and the sample_size it was learned from.
@@ -27,8 +28,12 @@ from db import get_connection  # noqa: E402
 from . import models  # noqa: E402
 
 
-# Pull delivered quantity per (category, product_name, size) so we can resolve
-# the size label the same way the rest of the module does.
+# Pull ordered quantity per (category, product_name, size) so we can resolve
+# the size label the same way the rest of the module does. We count ALL order
+# statuses, not just delivered: a size that never sold because it was out of
+# stock still had real demand — and stockout demand often surfaces as a
+# cancelled/on-hold order, so counting every status is what captures the true
+# size curve the customer is asking for.
 _QUERY = text("""
     SELECT
       COALESCE(s.category, 'Uncategorised')      AS category,
@@ -38,8 +43,7 @@ _QUERY = text("""
     FROM order_items oi
     JOIN orders o ON o.so_number = oi.so_number
     LEFT JOIN skus s ON oi.sku = s.sku
-    WHERE """ + models.delivered_sql() + """
-      AND o.order_date >= NOW() - INTERVAL '180 days'
+    WHERE o.order_date >= NOW() - INTERVAL '180 days'
       AND oi.product_name IS NOT NULL
     GROUP BY 1, 2, 3
 """)

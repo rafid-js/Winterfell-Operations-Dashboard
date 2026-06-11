@@ -41,8 +41,10 @@ _QUERY = text("""
       COALESCE(SUM(oi.quantity) FILTER (WHERE """ + models.cancelled_sql() + """), 0) AS cancelled,
       COALESCE(SUM(oi.quantity) FILTER (WHERE """ + models.returned_sql()  + """), 0) AS returned,
       COALESCE(SUM(oi.quantity) FILTER (WHERE """ + models.waiting_sql()   + """), 0) AS waiting,
-      COALESCE(SUM(oi.total_price) FILTER (WHERE """ + models.delivered_sql() + """), 0) AS delivered_rev,
-      COALESCE(SUM(oi.total_price) FILTER (WHERE (""" + models.cancelled_sql() +
+      COALESCE(SUM(oi.quantity * COALESCE(s.selling_price, 0))
+               FILTER (WHERE """ + models.delivered_sql() + """), 0) AS delivered_rev,
+      COALESCE(SUM(oi.quantity * COALESCE(s.selling_price, 0))
+               FILTER (WHERE (""" + models.cancelled_sql() +
               " OR " + models.waiting_sql() + """)), 0) AS ghost_rev
     FROM order_items oi
     JOIN orders o ON o.so_number = oi.so_number
