@@ -607,7 +607,7 @@ function loadSize(p){
     for(var i=0;i<cats.length;i++){
       var c=cats[i];
       h+='<div class="cat-card"><h3>'+esc(c.category)+'</h3>'
-        +'<div class="meta">Learned from '+(c.sample_size||0)+' delivered units</div>';
+        +'<div class="meta">Learned from '+(c.sample_size||0)+' demand signals (all order statuses)</div>';
       for(var j=0;j<c.sizes.length;j++){
         var s=c.sizes[j],pct=s.distribution_pct||0;
         h+='<div class="sizebar-row"><div class="lbl">'+esc(s.size)+'</div>'
