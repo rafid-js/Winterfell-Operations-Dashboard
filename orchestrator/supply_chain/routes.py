@@ -1425,7 +1425,7 @@ function initPMX(d){
     current_stock: d.current_stock || [],
     sales_30d: d.sales_30d || [],
     waiting_orders: d.waiting_orders || [],
-    lead_time_days: d.lead_time_days, buffer_days: d.buffer_days,
+    lead_time_days: d.lead_time_days, runway_days: d.runway_days,
     coverage_days: d.coverage_days,
     total_auto: d.total_auto || 0,
     total_current: d.total_auto || 0,
@@ -1445,7 +1445,7 @@ function initPMX(d){
   sp.innerHTML = '<div><div class="sp-name">' + esc(PMX.product_name) + '</div>'
     + '<div class="sp-meta">' + PMX.sizes.length + ' sizes &middot; Brain suggests '
     + PMX.total_auto + ' pcs (' + (d.total_30d_sales || 0) + ' sold in 30d, '
-    + 'lead ' + PMX.lead_time_days + 'd + ' + PMX.buffer_days + 'd buffer)</div></div>'
+    + 'lead ' + PMX.lead_time_days + 'd + ' + PMX.runway_days + 'd runway)</div></div>'
     + '<button class="sp-change" onclick="changeProduct()">Change</button>';
   document.getElementById('picker-field').style.display = 'none';
   document.getElementById('cost-field').style.display = '';

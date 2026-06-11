@@ -39,8 +39,14 @@ SIZE_ORDER = {
 
 # Default manufacturing lead time (days) used by the Brain quantity recommender.
 # Overridable per supplier via suppliers.avg_lead_days, or per request.
+#
+# Target-stock model: we size production so that the goods cover sales during
+# the production wait AND leave a forward runway of stock once they arrive.
+#   coverage_days = lead_time + TARGET_RUNWAY_DAYS
+# e.g. 15-day production + 10-day runway = 25 days of demand covered, so the
+# day the batch lands you still hold ~10 days of forward stock.
 DEFAULT_LEAD_TIME_DAYS = 15   # typical production time
-BUFFER_DAYS = 5               # safety buffer added on top of lead time
+TARGET_RUNWAY_DAYS = 10       # forward stock to hold AFTER the goods arrive
 MIN_PER_SIZE = 5              # supplier MOQ floor per size (only when the size sells)
 
 # Same regex used by the Products module to strip size suffixes and group SKUs
@@ -929,13 +935,16 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
     Build the per-size Brain quantity recommendation for a product.
 
     Finds all active SKUs whose base_name (product_name with size suffix stripped)
-    matches `product_name`, extracts size labels from product_name, then computes:
+    matches `product_name`, extracts size labels from product_name, then computes
+    per size (target-stock model):
 
-        recommended_total = ceil(
-            (total_30d_sales / 30 * lead_time_days)
-            - total_current_stock
-            + (total_30d_sales / 30 * 5)        # 5-day safety buffer
-        )
+        coverage_days = lead_time + TARGET_RUNWAY_DAYS
+        demand        = ceil(daily_velocity * coverage_days)
+        net_need      = max(0, demand - current_stock)
+        order_qty     = net_need + waiting_orders   (+ MOQ floor when the size sells)
+
+    This produces enough so that, once the goods arrive after `lead_time`, the
+    size still holds ~TARGET_RUNWAY_DAYS of forward stock.
 
     30-day sales includes: Delivered, On Hold, In Transit, Pending — i.e. all
     statuses EXCEPT Cancelled / Returned / Refunded / Rejected.
@@ -1021,7 +1030,9 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
 
     # ── Part 18: per-size independent deficit calculation ───────────────────
     # Each size is sized on its OWN demand vs stock; total is the RESULT.
-    coverage_days = lead + BUFFER_DAYS
+    # Target-stock model: cover the production wait PLUS a forward runway, so
+    # the size still holds ~TARGET_RUNWAY_DAYS of stock once the goods land.
+    coverage_days = lead + TARGET_RUNWAY_DAYS
     auto_qty = []
     net_need = []
     daily_velocity = []
@@ -1047,7 +1058,7 @@ def get_product_matrix(product_name, color=None, lead_time_days=None):
         'sku_base': sku_base,
         'product_name': pname,
         'lead_time_days': lead,
-        'buffer_days': BUFFER_DAYS,
+        'runway_days': TARGET_RUNWAY_DAYS,
         'min_per_size': MIN_PER_SIZE,
         'coverage_days': coverage_days,
         'unit_cost_bdt': unit_cost,
