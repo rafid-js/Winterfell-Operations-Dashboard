@@ -140,11 +140,61 @@ ON CONFLICT (script_name) DO NOTHING;
 # Phase 2 incremental migrations — safe to re-run.
 MIGRATIONS_SQL = [
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS size_breakdown JSONB;",
-    # Multi-product POs: array of line items
-    #   [{product_name, sku, unit_cost_bdt, quantity, total_cost_bdt, size_breakdown}]
-    # The scalar columns (product_name, quantity_ordered, total_cost_bdt …) stay
-    # populated with roll-up summaries so existing views keep working.
     "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_products JSONB;",
+
+    # Inventory ↔ SC sync column (also in inventory_setup; ADD IF NOT EXISTS is idempotent).
+    "ALTER TABLE reorder_queue ADD COLUMN IF NOT EXISTS po_status_display VARCHAR(30);",
+
+    # FK on po_timeline: cascade deletes so removing a PO removes its events.
+    """DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'fk_tl_po' AND table_name = 'po_timeline'
+      ) THEN
+        -- Drop the plain-reference constraint that ships with the table definition.
+        ALTER TABLE po_timeline DROP CONSTRAINT IF EXISTS po_timeline_po_id_fkey;
+        ALTER TABLE po_timeline
+          ADD CONSTRAINT fk_tl_po
+            FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE CASCADE;
+      END IF;
+    END $$;""",
+
+    # FK on reorder_queue: set NULL so deleting a PO clears the link.
+    """DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'fk_rq_po' AND table_name = 'reorder_queue'
+      ) THEN
+        UPDATE reorder_queue
+          SET po_created = FALSE, po_id = NULL
+          WHERE po_id IS NOT NULL
+            AND po_id NOT IN (SELECT po_id FROM purchase_orders);
+        ALTER TABLE reorder_queue
+          ADD CONSTRAINT fk_rq_po
+            FOREIGN KEY (po_id) REFERENCES purchase_orders(po_id) ON DELETE SET NULL;
+      END IF;
+    END $$;""",
+
+    # Trigger: auto-clear po_created + po_status_display when po_id is NULLed.
+    """CREATE OR REPLACE FUNCTION reset_po_created()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.po_id IS NULL THEN
+        NEW.po_created        := FALSE;
+        NEW.po_status_display := NULL;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;""",
+
+    "DROP TRIGGER IF EXISTS trg_reset_po_created ON reorder_queue;",
+
+    """CREATE TRIGGER trg_reset_po_created
+       BEFORE UPDATE ON reorder_queue
+       FOR EACH ROW
+       EXECUTE FUNCTION reset_po_created();""",
 ]
 
 
