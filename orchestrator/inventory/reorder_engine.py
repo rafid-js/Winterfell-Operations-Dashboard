@@ -209,8 +209,15 @@ def compute_group(base, variants, sales_map, wait_map, sold_map, last_map):
         'suppressed': False,
     }
 
-    # Kill-chain only for healthy-but-underselling products (Part 3 STEP 6).
-    if urgency == 'Healthy' and sell_through < 30:
+    # Kill-chain: score any healthy product that is either low sell-through OR
+    # hasn't sold recently (time-based three-strike rule must fire regardless of
+    # overall sell-through ratio).
+    days_no_sale = row.get('days_since_last_sale')
+    should_score = (urgency == 'Healthy' and (
+        sell_through < 50
+        or (days_no_sale is not None and days_no_sale >= 21)
+    ))
+    if should_score:
         verdict = kill_chain_scorer.score_group(row)
         row.update(verdict)
         if row.get('kill_chain_stage') in ('Markdown', 'Bundle', 'Liquidate', 'Dead'):
@@ -285,7 +292,10 @@ def run():
             row = compute_group(base, variants, sales_map, wait_map, sold_map, last_map)
             _persist(conn, row)
             counts[row['urgency']] += 1
-            if row.get('suppressed'):
+            # Log Watch, Markdown, Bundle, Liquidate, Dead to dead_stock_log.
+            # Watch items are NOT suppressed from reorder but ARE visible in the
+            # Dead Stock tab as early warnings.
+            if row.get('kill_chain_stage') is not None:
                 kill_chain_scorer.log_dead_stock(conn, row)
 
         # Summary alert.
