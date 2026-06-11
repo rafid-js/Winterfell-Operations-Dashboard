@@ -18,7 +18,12 @@ from decimal import Decimal
 
 from sqlalchemy import text
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'brain'))
+_BRAIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'brain')
+sys.path.insert(0, _BRAIN)
+# Load brain/.env explicitly so CLI runs (python -m inventory.*) work from any
+# directory — db.py's bare load_dotenv() only finds a .env in the current dir.
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(os.path.join(_BRAIN, '.env'))
 from db import get_connection  # noqa: E402
 
 
