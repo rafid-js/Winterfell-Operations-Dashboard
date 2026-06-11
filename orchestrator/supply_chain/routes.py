@@ -1820,13 +1820,17 @@ function renderSupplierResults(q){
        + '</div>';
   }
   if(!h && q){
-    h = '<div class="picker-item" onclick="document.getElementById(\'supplier-results\').classList.remove(\'open\')">'
+    h = '<div class="picker-item" onclick="closeSupResults()">'
       + '<div class="pi-name" style="color:#085041">+ Create &ldquo;' + esc(q) + '&rdquo;</div>'
       + '<div class="pi-meta">New supplier will be created when PO is saved</div>'
       + '</div>';
   }
   if(h){ box.innerHTML = h; box.classList.add('open'); }
   else  { box.classList.remove('open'); }
+}
+
+function closeSupResults(){
+  document.getElementById('supplier-results').classList.remove('open');
 }
 
 function pickSupplier(i){
@@ -2524,13 +2528,17 @@ function renderEditSupResults(q){
        + '</div>';
   }
   if(!h && q){
-    h = '<div class="picker-item" onclick="document.getElementById(\'e-supplier-results\').classList.remove(\'open\')">'
+    h = '<div class="picker-item" onclick="closeEditSupResults()">'
       + '<div class="pi-name" style="color:#085041">+ Create &ldquo;' + esc(q) + '&rdquo;</div>'
       + '<div class="pi-meta">New supplier will be created when saved</div>'
       + '</div>';
   }
   if(h){ box.innerHTML = h; box.classList.add('open'); }
   else  { box.classList.remove('open'); }
+}
+
+function closeEditSupResults(){
+  document.getElementById('e-supplier-results').classList.remove('open');
 }
 
 function pickEditSupplier(i){
