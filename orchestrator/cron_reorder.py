@@ -10,6 +10,14 @@ from db import get_connection
 
 
 def check_reorder():
+    # Refresh the inventory reorder_queue (target-stock engine + kill chain)
+    # before the legacy stock-level alert, so the dashboard stays current.
+    try:
+        from orchestrator.inventory import reorder_engine
+        reorder_engine.run()
+    except Exception as e:
+        print(f"  ! reorder_engine refresh failed: {e}")
+
     with get_connection() as conn:
         low = conn.execute(text("""
             SELECT sku, product_name, current_stock, reorder_level, reorder_quantity

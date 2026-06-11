@@ -248,6 +248,76 @@ def get_metrics():
     return m
 
 
+def get_true_demand():
+    """Current-month true-demand rows joined to the reorder queue for product
+    names + categories, newest ghost revenue first. Reads only."""
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT
+              td.sku_base,
+              COALESCE(rq.product_name, td.sku_base) AS product_name,
+              rq.category,
+              td.orders_placed, td.orders_delivered, td.orders_cancelled,
+              td.orders_returned, td.true_demand,
+              td.ghost_revenue_bdt, td.lost_sales_bdt, td.stockout_days,
+              CASE WHEN td.true_demand > 0
+                   THEN ROUND(td.orders_delivered::numeric / td.true_demand * 100, 1)
+                   ELSE NULL END AS conversion_pct,
+              td.period_start, td.period_end
+            FROM true_demand_log td
+            LEFT JOIN reorder_queue rq ON rq.sku_base = td.sku_base
+            WHERE td.period_start = date_trunc('month', CURRENT_DATE)
+            ORDER BY td.ghost_revenue_bdt DESC NULLS LAST, td.true_demand DESC
+        """)).fetchall()
+        return _attach_images(conn, _rows_to_list(rows))
+
+
+def get_size_intelligence():
+    """Size distribution grouped by category, sizes ordered S->XL / 28->40."""
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT category, size, distribution_pct, sample_size, calculated_at
+            FROM size_profiles
+        """)).fetchall()
+    by_cat = {}
+    for r in rows:
+        d = _row_to_dict(r)
+        by_cat.setdefault(d['category'] or 'Uncategorised', []).append(d)
+    out = []
+    for cat in sorted(by_cat.keys()):
+        sizes = sorted(by_cat[cat], key=lambda x: size_sort_key(x['size']))
+        out.append({
+            'category': cat,
+            'sample_size': sizes[0]['sample_size'] if sizes else 0,
+            'sizes': sizes,
+        })
+    out.sort(key=lambda c: c['sample_size'] or 0, reverse=True)
+    return out
+
+
+def get_test_batches():
+    """Every SKU flagged as a Test batch with its day-7 verdict."""
+    with get_connection() as conn:
+        rows = conn.execute(text("""
+            SELECT sku, product_name, category, COALESCE(test_batch_qty,0) AS test_batch_qty,
+                   test_batch_date, test_day7_sellthrough, test_verdict,
+                   COALESCE(current_stock,0) AS current_stock,
+                   (CURRENT_DATE - test_batch_date) AS days_elapsed
+            FROM skus
+            WHERE batch_type = 'Test' AND test_batch_date IS NOT NULL
+            ORDER BY
+              CASE test_verdict
+                WHEN 'Winner' THEN 1 WHEN 'Promising' THEN 2
+                WHEN 'Pending' THEN 3 WHEN 'Kill' THEN 4 ELSE 5 END,
+              test_batch_date DESC
+        """)).fetchall()
+        rows = _rows_to_list(rows)
+        imgs = _image_map(conn)
+        for r in rows:
+            r['image_url'] = imgs.get(base_name(r.get('product_name') or ''))
+    return rows
+
+
 def get_po_prefill(sku_base):
     """Build the Supply Chain PO pre-fill payload from the stored reorder row.
     Reads only — never recalculates. Returns None if the row is missing."""

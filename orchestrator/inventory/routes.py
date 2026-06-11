@@ -123,6 +123,64 @@ def api_mark_po(sku_base):
         return jsonify({'error': str(e)}), 500
 
 
+# ── Phase 2: True Demand / Size Intelligence / Test Batch ─────────────────────
+@inv_bp.route('/api/inventory/true-demand')
+@inv_login_required
+def api_true_demand():
+    try:
+        return jsonify(models.get_true_demand())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@inv_bp.route('/api/inventory/size-intel')
+@inv_login_required
+def api_size_intel():
+    try:
+        return jsonify(models.get_size_intelligence())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@inv_bp.route('/api/inventory/test-batch')
+@inv_login_required
+def api_test_batch():
+    try:
+        return jsonify(models.get_test_batches())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@inv_bp.route('/api/inventory/true-demand/run', methods=['POST'])
+@inv_login_required
+def api_run_true_demand():
+    try:
+        from . import true_demand
+        return jsonify({'success': True, 'result': true_demand.run()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@inv_bp.route('/api/inventory/size-intel/run', methods=['POST'])
+@inv_login_required
+def api_run_size_intel():
+    try:
+        from . import size_intelligence
+        return jsonify({'success': True, 'result': size_intelligence.run()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@inv_bp.route('/api/inventory/test-batch/run', methods=['POST'])
+@inv_login_required
+def api_run_test_batch():
+    try:
+        from . import test_batch
+        return jsonify({'success': True, 'result': test_batch.run()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ── UI (single page, tabs via JS) ─────────────────────────────────────────────
 INVENTORY_CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
@@ -225,6 +283,28 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
         font-size:14px;color:var(--text-secondary);margin:0 1.1rem 1rem;line-height:1.55}
 .strikes{font-size:15px;letter-spacing:2px}
 .coming{background:#fff;border:.5px solid var(--border);border-radius:12px;padding:40px;text-align:center;color:var(--text-tertiary);font-size:15px}
+.kpi{display:flex;gap:20px;flex-wrap:wrap;padding:.2rem 1.1rem 1rem}
+.kpi .k{font-size:13px;font-weight:500;color:var(--text-tertiary)}
+.kpi .k b{display:block;font-size:18px;color:var(--text-primary);font-weight:700;margin-top:2px}
+.kpi .k.ghost b{color:var(--red)}
+.cat-card{background:#fff;border:.5px solid var(--border);border-radius:12px;padding:1.1rem 1.2rem;margin-bottom:12px}
+.cat-card h3{font-size:17px;font-weight:600;margin-bottom:3px}
+.cat-card .meta{font-size:13px;font-weight:500;color:var(--text-tertiary);margin-bottom:14px}
+.sizebar-row{display:grid;grid-template-columns:60px 1fr 64px;gap:12px;align-items:center;margin-bottom:9px}
+.sizebar-row .lbl{font-size:14px;font-weight:700}
+.sizebar-row .pct{font-size:14px;font-weight:700;text-align:right;color:var(--text-secondary)}
+.bar{height:22px;border-radius:6px;background:var(--track);position:relative;overflow:hidden;min-width:30px}
+.bar>span{position:absolute;left:0;top:0;bottom:0;background:var(--purple);border-radius:6px}
+.b-winner{background:#E1F5EE;color:#085041;border:.5px solid #5DCAA5}
+.b-promising{background:#E6F1FB;color:#0C447C;border:.5px solid #85B7EB}
+.b-pending{background:#F1EFE8;color:#444441;border:.5px solid #D3D1C7}
+.b-kill{background:#FCEBEB;color:#791F1F;border:.5px solid #F09595}
+.tb-form{background:#fff;border:.5px solid var(--border);border-radius:12px;padding:1rem 1.1rem;margin-bottom:14px;
+         display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.tb-form .fld{display:flex;flex-direction:column;gap:4px}
+.tb-form label{font-size:12px;font-weight:600;color:var(--text-secondary)}
+.tb-form input{background:#fff;border:.5px solid var(--border);border-radius:8px;padding:9px 11px;font-size:14px;font-family:Arial;color:var(--text-primary)}
+.tb-form input:focus{outline:none;border-color:var(--purple)}
 """
 
 INVENTORY_HTML = """<!doctype html>
@@ -270,6 +350,7 @@ INVENTORY_HTML = """<!doctype html>
     <div class="tab"        data-tab="dead"       onclick="setTab('dead',this)">Dead Stock</div>
     <div class="tab"        data-tab="demand"     onclick="setTab('demand',this)">True Demand</div>
     <div class="tab"        data-tab="size"       onclick="setTab('size',this)">Size Intel</div>
+    <div class="tab"        data-tab="test"       onclick="setTab('test',this)">Test Batch</div>
   </div>
 
   <div id="panel"><div class="empty">Loading&hellip;</div></div>
@@ -290,7 +371,7 @@ function imgErr(el){var ph=document.createElement('div');ph.className='thumb-ph'
 function searchBar(id,fn){return '<input id="'+id+'" class="search" placeholder="Search product or SKU..." oninput="'+fn+'()">';}
 function matchQ(r,q){return !q||(r.product_name||'').toLowerCase().indexOf(q)>=0||(r.sku_base||'').toLowerCase().indexOf(q)>=0;}
 function curQ(id){var el=document.getElementById(id);return el?el.value.toLowerCase():'';}
-var TITLES={stock:'Stock Health',reorder:'Reorder Queue',dead:'Dead Stock',demand:'True Demand',size:'Size Intel'};
+var TITLES={stock:'Stock Health',reorder:'Reorder Queue',dead:'Dead Stock',demand:'True Demand',size:'Size Intel',test:'Test Batch'};
 
 function loadMetrics(){
   fetch('/api/inventory/metrics').then(function(r){return r.json();}).then(function(m){
@@ -315,7 +396,10 @@ function render(){
   if(TAB==='stock')return loadStock(p);
   if(TAB==='reorder')return loadReorder(p);
   if(TAB==='dead')return loadDead(p);
-  p.innerHTML='<div class="coming">'+TITLES[TAB]+' &mdash; coming in the next build phase.<br><small>Engines (true_demand.py / size_intelligence.py) ship next.</small></div>';
+  if(TAB==='demand')return loadDemand(p);
+  if(TAB==='size')return loadSize(p);
+  if(TAB==='test')return loadTest(p);
+  p.innerHTML='<div class="coming">'+TITLES[TAB]+' &mdash; coming soon.</div>';
 }
 
 function sizeGrid(row){
@@ -457,14 +541,123 @@ function renderDead(){
   });
   listEl.innerHTML=h;
 }
+// ── True Demand ───────────────────────────────────────────────────────────
+function loadDemand(p){
+  fetch('/api/inventory/true-demand').then(function(r){return r.json();}).then(function(rows){
+    if(rows.error){p.innerHTML='<div class="empty">'+esc(rows.error)+'</div>';return;}
+    window._demand=rows;
+    p.innerHTML=searchBar('q-demand','renderDemand')+'<div id="demand-list"></div>';
+    renderDemand();
+  }).catch(function(e){p.innerHTML='<div class="empty">Failed: '+esc(e.message)+'</div>';});
+}
+function renderDemand(){
+  var all=window._demand||[],q=curQ('q-demand');
+  var list=all.filter(function(r){return matchQ(r,q);});
+  var el=document.getElementById('demand-list');if(!el)return;
+  if(!list.length){el.innerHTML='<div class="empty">'+(q?'No matches.':'No demand data yet. Hit Recalculate to run the True Demand engine.')+'</div>';return;}
+  var h='';
+  for(var i=0;i<list.length;i++){
+    var r=list[i],conv=(r.conversion_pct!=null?r.conversion_pct+'%':'—');
+    h+='<div class="card u-monitor"><div class="card-top"><div class="ct-left">'+thumb(r)+'<div>'
+      +'<div class="c-name">'+esc(r.product_name)+'</div>'
+      +'<div class="c-meta">'+(r.category?esc(r.category):'')+'</div></div></div>'
+      +'<div style="text-align:right"><div class="q-total">'+fmtBDT(r.ghost_revenue_bdt)+'</div><div class="q-label">ghost revenue</div></div></div>'
+      +'<div class="kpi">'
+      +'<div class="k">True demand<b>'+(r.true_demand||0)+'</b></div>'
+      +'<div class="k">Delivered<b>'+(r.orders_delivered||0)+'</b></div>'
+      +'<div class="k">Conversion<b>'+conv+'</b></div>'
+      +'<div class="k">Cancelled<b>'+(r.orders_cancelled||0)+'</b></div>'
+      +'<div class="k">Waiting<b>'+((r.true_demand||0)-(r.orders_delivered||0)-(r.orders_cancelled||0))+'</b></div>'
+      +'</div></div>';
+  }
+  el.innerHTML=h;
+}
+
+// ── Size Intelligence ─────────────────────────────────────────────────────
+function loadSize(p){
+  fetch('/api/inventory/size-intel').then(function(r){return r.json();}).then(function(cats){
+    if(cats.error){p.innerHTML='<div class="empty">'+esc(cats.error)+'</div>';return;}
+    if(!cats.length){p.innerHTML='<div class="empty">No size profiles yet. Hit Recalculate to learn the size curve.</div>';return;}
+    var h='';
+    for(var i=0;i<cats.length;i++){
+      var c=cats[i];
+      h+='<div class="cat-card"><h3>'+esc(c.category)+'</h3>'
+        +'<div class="meta">Learned from '+(c.sample_size||0)+' delivered units</div>';
+      for(var j=0;j<c.sizes.length;j++){
+        var s=c.sizes[j],pct=s.distribution_pct||0;
+        h+='<div class="sizebar-row"><div class="lbl">'+esc(s.size)+'</div>'
+          +'<div class="bar"><span style="width:'+Math.min(pct,100)+'%"></span></div>'
+          +'<div class="pct">'+pct+'%</div></div>';
+      }
+      h+='</div>';
+    }
+    p.innerHTML=h;
+  }).catch(function(e){p.innerHTML='<div class="empty">Failed: '+esc(e.message)+'</div>';});
+}
+
+// ── Test Batch ────────────────────────────────────────────────────────────
+function vBadge(v){var k=(v||'Pending').toLowerCase();return '<span class="badge b-'+k+'">'+esc(v||'Pending')+'</span>';}
+function loadTest(p){
+  fetch('/api/inventory/test-batch').then(function(r){return r.json();}).then(function(rows){
+    if(rows.error){p.innerHTML='<div class="empty">'+esc(rows.error)+'</div>';return;}
+    window._test=rows;
+    p.innerHTML=tbForm()+searchBar('q-test','renderTest')+'<div id="test-list"></div>';
+    renderTest();
+  }).catch(function(e){p.innerHTML='<div class="empty">Failed: '+esc(e.message)+'</div>';});
+}
+function tbForm(){
+  return '<div class="tb-form">'
+    +'<div class="fld"><label>SKU</label><input id="tb-sku" placeholder="exact SKU code"></div>'
+    +'<div class="fld"><label>Test batch qty</label><input id="tb-qty" type="number" min="1" placeholder="e.g. 30"></div>'
+    +'<button class="btn btn-primary" onclick="markTest(this)">Flag as Test batch</button></div>';
+}
+function markTest(btn){
+  var sku=(document.getElementById('tb-sku').value||'').trim();
+  var qty=parseInt(document.getElementById('tb-qty').value,10);
+  if(!sku){alert('Enter a SKU');return;}
+  btn.disabled=true;
+  fetch('/api/inventory/sku/batch-type',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sku:sku,batch_type:'Test',qty:isNaN(qty)?null:qty})})
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled=false;
+      if(d.error){alert('Failed: '+d.error);return;}
+      loadTest(document.getElementById('panel'));
+    }).catch(function(e){btn.disabled=false;alert('Failed: '+e.message);});
+}
+function renderTest(){
+  var all=window._test||[],q=curQ('q-test');
+  var list=all.filter(function(r){return !q||(r.product_name||'').toLowerCase().indexOf(q)>=0||(r.sku||'').toLowerCase().indexOf(q)>=0;});
+  var el=document.getElementById('test-list');if(!el)return;
+  if(!list.length){el.innerHTML='<div class="empty">'+(q?'No matches.':'No test batches yet. Flag a SKU above, then Recalculate.')+'</div>';return;}
+  var h='';
+  for(var i=0;i<list.length;i++){
+    var r=list[i],st=(r.test_day7_sellthrough!=null?r.test_day7_sellthrough+'%':'—');
+    h+='<div class="card u-monitor"><div class="card-top"><div class="ct-left">'+thumb(r)+'<div>'
+      +'<div class="c-name">'+esc(r.product_name)+'</div>'
+      +'<div class="c-meta"><span class="c-sku">'+esc(r.sku)+'</span> &middot; '+vBadge(r.test_verdict)+'</div></div></div>'
+      +'<div style="text-align:right"><div class="q-total">'+st+'</div><div class="q-label">day-7 sell-through</div></div></div>'
+      +'<div class="kpi">'
+      +'<div class="k">Test qty<b>'+(r.test_batch_qty||0)+'</b></div>'
+      +'<div class="k">In stock<b>'+(r.current_stock||0)+'</b></div>'
+      +'<div class="k">Days elapsed<b>'+(r.days_elapsed!=null?r.days_elapsed:'—')+'</b></div>'
+      +'<div class="k">Started<b>'+esc((r.test_batch_date||'').slice(0,10))+'</b></div>'
+      +'</div></div>';
+  }
+  el.innerHTML=h;
+}
+
 function dsAction(id,status){
   fetch('/api/inventory/dead-stock/'+id+'/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})})
     .then(function(r){return r.json();}).then(function(){render();loadMetrics();});
 }
 
+var RUN_ENDPOINT={stock:'/api/inventory/reorder/run',reorder:'/api/inventory/reorder/run',
+  dead:'/api/inventory/reorder/run',demand:'/api/inventory/true-demand/run',
+  size:'/api/inventory/size-intel/run',test:'/api/inventory/test-batch/run'};
 function runEngine(btn){
+  var ep=RUN_ENDPOINT[TAB]||'/api/inventory/reorder/run';
   btn.disabled=true;var old=btn.innerHTML;btn.innerHTML='Calculating&hellip;';
-  fetch('/api/inventory/reorder/run',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+  fetch(ep,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.disabled=false;btn.innerHTML=old;
     if(d.error){alert('Failed: '+d.error);return;}
     loadMetrics();render();

@@ -33,9 +33,13 @@ def _run(module: str):
         log.error('%s crashed: %s', module, e, exc_info=True)
 
 
-def job_nuport():   _run('orchestrator.cron_nuport')
-def job_wc():       _run('orchestrator.cron_wc')
-def job_briefing(): _run('orchestrator.cron_briefing')
+def job_nuport():      _run('orchestrator.cron_nuport')
+def job_wc():          _run('orchestrator.cron_wc')
+def job_briefing():    _run('orchestrator.cron_briefing')
+def job_reorder():     _run('orchestrator.cron_reorder')
+def job_true_demand(): _run('orchestrator.cron_true_demand')
+def job_size_intel():  _run('orchestrator.cron_size_intel')
+def job_test_batch():  _run('orchestrator.cron_test_batch')
 
 
 if __name__ == '__main__':
@@ -55,8 +59,22 @@ if __name__ == '__main__':
     sched.add_job(job_briefing, CronTrigger(hour=9, minute=0, timezone=TZ),
                   id='briefing', max_instances=1)
 
+    # Inventory module engines.
+    sched.add_job(job_reorder,     IntervalTrigger(hours=6),
+                  id='reorder',     max_instances=1, misfire_grace_time=3600)
+    sched.add_job(job_true_demand, CronTrigger(hour=7, minute=0, timezone=TZ),
+                  id='true_demand', max_instances=1, misfire_grace_time=3600)
+    sched.add_job(job_size_intel,  CronTrigger(day_of_week='sun', hour=6, minute=0, timezone=TZ),
+                  id='size_intel',  max_instances=1, misfire_grace_time=3600)
+    sched.add_job(job_test_batch,  CronTrigger(hour=8, minute=0, timezone=TZ),
+                  id='test_batch',  max_instances=1, misfire_grace_time=3600)
+
     log.info('Winterfell cron worker started (timezone=%s)', TZ)
     log.info('  nuport_sync:    every 15 min')
     log.info('  wc_sync:        every 6h')
     log.info('  daily_briefing: daily 09:00')
+    log.info('  reorder_engine: every 6h')
+    log.info('  true_demand:    daily 07:00')
+    log.info('  size_intel:     weekly Sun 06:00')
+    log.info('  test_batch:     daily 08:00')
     sched.start()
