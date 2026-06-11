@@ -1714,12 +1714,38 @@ function submitPo(){
     body: JSON.stringify(body)
   }).then(function(r){ return r.json(); }).then(function(data){
     if(data.error){ err.innerHTML = esc(data.error); err.classList.add('show'); return; }
+    // If this PO came from the reorder queue, link it back so the queue shows "View PO".
+    if(PREFILL_BASE && data.po_id){
+      fetch('/api/inventory/reorder/' + encodeURIComponent(PREFILL_BASE) + '/mark-po',
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({po_id:data.po_id})})
+        .catch(function(){});
+    }
     closeModal();
     loadPos();
   }).catch(function(e){ err.innerHTML = 'Failed: ' + esc(e.message); err.classList.add('show'); });
 }
 
+/* ── reorder-queue bridge: ?prefill=<base name> auto-opens a pre-filled PO ──*/
+var PREFILL_BASE = null;
+function handlePrefill(){
+  var m = window.location.search.match(/[?&]prefill=([^&]+)/);
+  if(!m) return;
+  PREFILL_BASE = decodeURIComponent(m[1]);
+  var base = decodeURIComponent(m[1]);
+  openModal();
+  var mb = document.getElementById('size-matrix');
+  mb.style.display = 'block';
+  mb.innerHTML = '<div style="color:#8b949e;font-size:12px;padding:8px 0">Loading Brain recommendation&hellip;</div>';
+  fetch('/api/sc/product-matrix?product_name=' + encodeURIComponent(base))
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data.error){ mb.innerHTML = '<div class="picker-empty">' + esc(data.error) + '</div>'; return; }
+      initPMX(data);
+    }).catch(function(e){ mb.innerHTML = '<div class="picker-empty">Failed: ' + esc(e.message) + '</div>'; });
+}
+
 loadPos();
+handlePrefill();
 </script>
 </body>
 </html>"""

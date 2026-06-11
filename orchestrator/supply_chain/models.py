@@ -932,7 +932,87 @@ def search_products(query, limit=20):
 
 def get_product_matrix(product_name, color=None, lead_time_days=None):
     """
-    Build the per-size Brain quantity recommendation for a product.
+    Return the per-size Brain matrix for the New PO form.
+
+    Source of truth is the Inventory module's reorder_queue (the ONE formula
+    lives in inventory/reorder_engine.py — Supply Chain never recalculates).
+    If the queue has no row yet (engine not run, or a brand-new product), fall
+    back to a live computation so the form still works.
+    """
+    pname = (product_name or '').strip()
+    if not pname:
+        raise ValueError('product_name is required')
+    with get_connection() as conn:
+        row = conn.execute(text(
+            "SELECT * FROM reorder_queue WHERE sku_base = :b"
+        ), {'b': pname}).fetchone()
+        if row is not None:
+            return _matrix_from_queue(conn, _row_to_dict(row))
+    return _live_product_matrix(pname, lead_time_days)
+
+
+def _matrix_from_queue(conn, r):
+    """Transform a reorder_queue row (dicts keyed by size) into the array shape
+    the New PO matrix UI expects. Reads stored quantities — no recompute."""
+    size_bd  = r.get('size_breakdown') or {}
+    stock_bd = r.get('current_stock_breakdown') or {}
+    sales_bd = r.get('sales_30d_breakdown') or {}
+    net_bd   = r.get('net_need_breakdown') or {}
+    wait_bd  = r.get('waiting_orders_breakdown') or {}
+
+    sizes = sorted(set(list(size_bd) + list(stock_bd) + list(sales_bd)),
+                   key=_size_sort_key)
+
+    # Map size label -> sku + cost for display, from the live skus table.
+    sku_rows = conn.execute(text("""
+        SELECT sku, product_name, COALESCE(size,'') AS raw_size, cost_price
+        FROM skus
+        WHERE is_active = TRUE
+          AND TRIM(regexp_replace(product_name, :size_re, '', 'i')) = :pname
+    """), {'pname': r.get('sku_base'), 'size_re': _SIZE_RE_SQL}).fetchall()
+    sku_by_size, costs = {}, []
+    for sr in sku_rows:
+        m = sr._mapping
+        lbl = _extract_size_label(m['product_name'], m['raw_size'])
+        sku_by_size[lbl] = m['sku']
+        if m['cost_price']:
+            costs.append(float(m['cost_price']))
+
+    auto_qty       = [int(size_bd.get(s, 0)) for s in sizes]
+    current_stock  = [int(stock_bd.get(s, 0)) for s in sizes]
+    sales_30d      = [int(sales_bd.get(s, 0)) for s in sizes]
+    net_need       = [int(net_bd.get(s, 0)) for s in sizes]
+    waiting_orders = [int(wait_bd.get(s, 0)) for s in sizes]
+    daily_velocity = [round(v / 30.0, 2) for v in sales_30d]
+    skus           = [sku_by_size.get(s, '') for s in sizes]
+    unit_cost      = round(sum(costs) / len(costs), 2) if costs else 0.0
+
+    return {
+        'sku_base': _common_sku_prefix([s for s in skus if s]),
+        'product_name': r.get('sku_base'),
+        'lead_time_days': DEFAULT_LEAD_TIME_DAYS,
+        'runway_days': TARGET_RUNWAY_DAYS,
+        'min_per_size': MIN_PER_SIZE,
+        'coverage_days': DEFAULT_LEAD_TIME_DAYS + TARGET_RUNWAY_DAYS,
+        'unit_cost_bdt': unit_cost,
+        'sizes': sizes,
+        'skus': skus,
+        'auto_qty': auto_qty,
+        'net_need': net_need,
+        'daily_velocity': daily_velocity,
+        'current_stock': current_stock,
+        'sales_30d': sales_30d,
+        'waiting_orders': waiting_orders,
+        'total_auto': int(r.get('recommended_total') or sum(auto_qty)),
+        'total_30d_sales': sum(sales_30d),
+        'total_stock': sum(current_stock),
+        'source': 'reorder_queue',
+    }
+
+
+def _live_product_matrix(product_name, lead_time_days=None):
+    """
+    Build the per-size Brain quantity recommendation for a product (live).
 
     Finds all active SKUs whose base_name (product_name with size suffix stripped)
     matches `product_name`, extracts size labels from product_name, then computes
