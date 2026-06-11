@@ -195,8 +195,9 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
           display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
 .c-name{font-size:16px;font-weight:600;line-height:1.3}
 .c-sku{font-family:'Courier New',monospace;font-size:13px;color:var(--text-tertiary)}
-.c-meta{font-size:13px;color:var(--text-secondary);margin-top:5px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:13px;font-weight:500}
+.c-meta{font-size:14px;font-weight:500;color:var(--text-secondary);margin-top:5px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.c-sub{font-size:14px;font-weight:500;color:var(--text-secondary);margin-top:4px}
+.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:14px;font-weight:600}
 .b-critical{background:#FCEBEB;color:#791F1F;border:.5px solid #F09595}
 .b-rush{background:#FAEEDA;color:#633806;border:.5px solid #EF9F27}
 .b-monitor{background:#E6F1FB;color:#0C447C;border:.5px solid #85B7EB}
@@ -204,9 +205,9 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
 .b-dead{background:#F1EFE8;color:#444441;border:.5px solid #D3D1C7}
 .sizegrid{display:flex;gap:6px;flex-wrap:wrap;padding:0 1.1rem 1rem}
 .sz{border:.5px solid var(--border);border-radius:8px;padding:7px 10px;min-width:62px;text-align:center;background:var(--bg-inner)}
-.sz .l{font-size:13px;font-weight:700;color:var(--text-primary)}
-.sz .s{font-size:16px;font-weight:600;margin-top:3px}
-.sz .v{font-size:11px;color:var(--text-tertiary);margin-top:2px}
+.sz .l{font-size:14px;font-weight:700;color:var(--text-primary)}
+.sz .s{font-size:18px;font-weight:700;margin-top:3px}
+.sz .v{font-size:13px;font-weight:500;color:var(--text-secondary);margin-top:2px}
 .sz.ok .s{color:#1D9E75}
 .sz.low{background:#FAEEDA}.sz.low .s{color:#BA7517}
 .sz.zero{background:#FCEBEB}.sz.zero .s{color:#E24B4A;font-weight:600}
@@ -215,9 +216,10 @@ header h1{font-size:1.2rem;font-weight:700;color:#f0f6fc;grid-area:brand}
       padding:.95rem 1.1rem;border-bottom:.5px solid var(--border)}
 .qrow:last-child{border-bottom:none}
 .q-num{font-size:14px;color:var(--text-tertiary);font-weight:600}
-.q-total{font-size:18px;font-weight:700}
-.empty{text-align:center;color:var(--text-tertiary);font-size:14px;padding:50px 20px}
-.section-h{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+.q-total{font-size:20px;font-weight:700}
+.q-label{font-size:13px;font-weight:600;color:var(--text-secondary)}
+.empty{text-align:center;color:var(--text-tertiary);font-size:15px;padding:50px 20px}
+.section-h{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
            margin:18px 0 8px;color:var(--text-secondary)}
 .ai-rec{background:var(--bg-inner);border:.5px solid var(--border);border-radius:8px;padding:10px 12px;
         font-size:14px;color:var(--text-secondary);margin:0 1.1rem 1rem;line-height:1.55}
@@ -378,6 +380,9 @@ function renderReorder(){
   var listEl=document.getElementById('reorder-list');if(!listEl)return;
   var groups={Critical:[],Rush:[],Monitor:[]};
   for(var i=0;i<rows.length;i++){var u=rows[i].urgency;if(groups[u])groups[u].push(rows[i]);}
+  ['Critical','Rush','Monitor'].forEach(function(g){
+    groups[g].sort(function(a,b){return (b.recommended_total||0)-(a.recommended_total||0);});
+  });
   var h='';
   ['Critical','Rush','Monitor'].forEach(function(g){
     if(!groups[g].length)return;
@@ -399,13 +404,16 @@ function qrow(r){
   var btn=r.po_created
     ? '<a class="btn btn-ghost" href="/supply-chain/po/'+encodeURIComponent(r.po_id)+'">View '+esc(r.po_id)+' &#8599;</a>'
     : '<a class="btn btn-primary" href="/supply-chain?prefill='+encodeURIComponent(r.sku_base)+'">Create PO &#8599;</a>';
+  var sub='';
+  if(r.days_until_stockout!=null)sub+='Stockout in '+r.days_until_stockout+'d';
+  if(r.total_waiting_orders)sub+=(sub?' &middot; ':'')+r.total_waiting_orders+' waiting orders';
   return '<div class="card '+uClass(r.urgency)+'"><div class="qrow">'
     +'<div class="q-num">'+uBadge(r.urgency)+'</div>'
     +'<div>'+thumb(r)+'</div>'
-    +'<div><div class="c-name">'+esc(r.product_name)+'</div><div class="c-sku">'+esc(r.sku_base)
-    +(r.days_until_stockout!=null?' &middot; stockout in '+r.days_until_stockout+'d':'')
-    +(r.total_waiting_orders?' &middot; '+r.total_waiting_orders+' waiting':'')+'</div></div>'
-    +'<div style="text-align:right"><div class="q-total">'+(r.recommended_total||0)+'</div><div class="c-sku">'+fmtBDT(r.capital_at_risk_bdt)+' at risk</div></div>'
+    +'<div><div class="c-name">'+esc(r.product_name)+'</div>'
+    +(sub?'<div class="c-sub">'+sub+'</div>':'')+'</div>'
+    +'<div style="text-align:right"><div class="q-total">'+(r.recommended_total||0)+' pcs</div>'
+    +'<div class="q-label">'+fmtBDT(r.capital_at_risk_bdt)+' at risk</div></div>'
     +'<div>'+btn+'</div></div></div>';
 }
 
