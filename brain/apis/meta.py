@@ -58,7 +58,10 @@ class MetaClient:
             params=p,
             timeout=30,
         )
-        r.raise_for_status()
+        if not r.ok:
+            raise requests.HTTPError(
+                f"{r.status_code} {r.reason}: {r.text[:500]}", response=r
+            )
         return r.json()
 
     # ── Insights ──────────────────────────────────────────────────────────────
