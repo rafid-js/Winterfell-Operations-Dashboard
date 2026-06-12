@@ -9,7 +9,7 @@ import os
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
 
 _BASE_URL = "https://graph.facebook.com/v19.0"
 
@@ -107,6 +107,7 @@ class MetaClient:
 
     def get_account_info(self) -> dict:
         """Return basic account info: name and currency."""
+        self._ensure_auth()
         return self._get(
             f"/{self._ad_account_id}",
             {'fields': 'name,currency'},
