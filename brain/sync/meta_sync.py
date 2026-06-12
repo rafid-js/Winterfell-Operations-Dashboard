@@ -52,6 +52,54 @@ UPSERT_SPEND = text("""
 
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
+def _date_chunks(start: str, end: str, chunk_days: int = 365):
+    """Split a date range into chunks to stay within Meta's API limits."""
+    s = datetime.strptime(start, '%Y-%m-%d')
+    e = datetime.strptime(end, '%Y-%m-%d')
+    while s < e:
+        chunk_end = min(s + timedelta(days=chunk_days - 1), e)
+        yield s.strftime('%Y-%m-%d'), chunk_end.strftime('%Y-%m-%d')
+        s = chunk_end + timedelta(days=1)
+
+
+def _upsert_rows(conn, rows, account_id, account_name):
+    ok = err = 0
+    for row in rows:
+        try:
+            def _f(k, r=row):
+                try:
+                    return float(r.get(k) or 0)
+                except (ValueError, TypeError):
+                    return 0.0
+
+            def _i(k, r=row):
+                try:
+                    return int(r.get(k) or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            conn.execute(UPSERT_SPEND, {
+                'date':          row.get('date_start'),
+                'account_id':    account_id,
+                'account_name':  account_name,
+                'campaign_id':   row.get('campaign_id'),
+                'campaign_name': row.get('campaign_name'),
+                'adset_id':      row.get('adset_id'),
+                'adset_name':    row.get('adset_name'),
+                'spend_bdt':     _f('spend'),
+                'impressions':   _i('impressions'),
+                'clicks':        _i('clicks'),
+                'ctr':           _f('ctr'),
+                'cpm':           _f('cpm'),
+                'cpc':           _f('cpc'),
+            })
+            ok += 1
+        except Exception as e:
+            err += 1
+            print(f"  ✗ {row.get('date_start')} {row.get('campaign_name')}: {e}")
+    return ok, err
+
+
 def sync_spend(days: int = 7, since_override: str = None):
     print(f"\n=== Meta Ads Spend → Brain  {datetime.now():%Y-%m-%d %H:%M} ===\n")
     log = SyncLog('meta', 'ad_spend')
@@ -61,7 +109,6 @@ def sync_spend(days: int = 7, since_override: str = None):
     else:
         since = log.last_record_at()
         if since:
-            # Re-pull from last sync minus 2 days (Meta adjusts numbers retroactively)
             start = (since - timedelta(days=2)).strftime('%Y-%m-%d')
         else:
             start = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
@@ -77,53 +124,25 @@ def sync_spend(days: int = 7, since_override: str = None):
         account_name = ''
         account_id   = ''
 
-    rows = meta.get_insights(since=start, until=end, level='adset')
-    print(f"  {len(rows)} insight rows fetched\n")
-
-    ok = err = 0
+    total_ok = total_err = 0
+    chunks = list(_date_chunks(start, end))
 
     with get_connection() as conn:
-        for row in rows:
-            try:
-                def _f(k):
-                    try:
-                        return float(row.get(k) or 0)
-                    except (ValueError, TypeError):
-                        return 0.0
-
-                def _i(k):
-                    try:
-                        return int(row.get(k) or 0)
-                    except (ValueError, TypeError):
-                        return 0
-
-                conn.execute(UPSERT_SPEND, {
-                    'date':          row.get('date_start'),
-                    'account_id':    account_id,
-                    'account_name':  account_name,
-                    'campaign_id':   row.get('campaign_id'),
-                    'campaign_name': row.get('campaign_name'),
-                    'adset_id':      row.get('adset_id'),
-                    'adset_name':    row.get('adset_name'),
-                    'spend_bdt':     _f('spend'),
-                    'impressions':   _i('impressions'),
-                    'clicks':        _i('clicks'),
-                    'ctr':           _f('ctr'),
-                    'cpm':           _f('cpm'),
-                    'cpc':           _f('cpc'),
-                })
-                ok += 1
-            except Exception as e:
-                err += 1
-                print(f"  ✗ {row.get('date_start')} {row.get('campaign_name')}: {e}")
-
+        for chunk_start, chunk_end in chunks:
+            if len(chunks) > 1:
+                print(f"  Chunk {chunk_start} → {chunk_end}")
+            rows = meta.get_insights(since=chunk_start, until=chunk_end, level='adset')
+            print(f"  {len(rows)} rows fetched")
+            ok, err = _upsert_rows(conn, rows, account_id, account_name)
+            total_ok += ok
+            total_err += err
         conn.commit()
 
-    print(f"\n── Summary ── synced:{ok}  errors:{err}\n")
-    if err == 0:
-        log.finish(records_synced=ok, last_record_at=datetime.now())
+    print(f"\n── Summary ── synced:{total_ok}  errors:{total_err}\n")
+    if total_err == 0:
+        log.finish(records_synced=total_ok, last_record_at=datetime.now())
     else:
-        log.error(f"{err} errors during Meta spend sync")
+        log.error(f"{total_err} errors during Meta spend sync")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
