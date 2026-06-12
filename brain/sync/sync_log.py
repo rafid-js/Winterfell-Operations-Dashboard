@@ -18,6 +18,7 @@ Usage:
 """
 import sys
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import text
 
 sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
@@ -41,7 +42,7 @@ class SyncLog:
             conn.commit()
             self._id = row[0]
 
-    def last_record_at(self) -> datetime | None:
+    def last_record_at(self) -> Optional[datetime]:
         """Return the last_record_at from the most recent successful sync."""
         with get_connection() as conn:
             row = conn.execute(text("""

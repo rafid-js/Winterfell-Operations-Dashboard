@@ -7,6 +7,7 @@ Import anywhere: from apis.meta import meta
 """
 import os
 import requests
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
@@ -114,7 +115,7 @@ class MetaClient:
         )
 
 
-def _extract_after_cursor(next_url: str) -> str | None:
+def _extract_after_cursor(next_url: str) -> Optional[str]:
     """Pull the 'after' cursor value out of a Graph API paging.next URL."""
     try:
         from urllib.parse import urlparse, parse_qs
