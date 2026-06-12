@@ -16,6 +16,7 @@ a duplicate WC-XXXX row.
 import sys
 import argparse
 from datetime import datetime
+from typing import Optional, List
 from sqlalchemy import text
 
 sys.path.insert(0, __file__.rsplit('/sync', 1)[0])
@@ -39,7 +40,7 @@ def _float(val):
         return None
 
 
-def _phone(billing: dict) -> str | None:
+def _phone(billing: dict) -> Optional[str]:
     return _str(billing.get('phone'))
 
 
@@ -47,7 +48,7 @@ def _trunc(val, n):
     return val[:n] if val and len(val) > n else val
 
 
-def map_customer(order: dict) -> dict | None:
+def map_customer(order: dict) -> Optional[dict]:
     b = order.get('billing') or {}
     phone = _phone(b)
     if not phone:
@@ -64,7 +65,7 @@ def map_customer(order: dict) -> dict | None:
     }
 
 
-def map_order(order: dict, customer_id: int | None) -> dict:
+def map_order(order: dict, customer_id: Optional[int]) -> dict:
     b      = order.get('billing') or {}
     phone  = _phone(b)
     name   = ' '.join(filter(None, [b.get('first_name'), b.get('last_name')])).strip() or None
@@ -105,7 +106,7 @@ def map_order(order: dict, customer_id: int | None) -> dict:
     }
 
 
-def map_items(order: dict, so_number: str | None = None) -> list[dict]:
+def map_items(order: dict, so_number: Optional[str] = None) -> List[dict]:
     items = []
     so = so_number or f"WC-{order.get('id')}"
     for li in (order.get('line_items') or []):

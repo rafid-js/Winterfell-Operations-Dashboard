@@ -18,6 +18,7 @@ import sys
 import time
 import argparse
 import requests
+from typing import Optional
 from datetime import datetime
 from sqlalchemy import text
 
@@ -51,7 +52,7 @@ def _specs(product: dict) -> dict:
     return out
 
 
-def map_sku_from_inventory(item: dict) -> dict | None:
+def map_sku_from_inventory(item: dict) -> Optional[dict]:
     p = item.get('product') or {}
     sku = (p.get('sku') or '').strip()
     if not sku:
@@ -71,7 +72,7 @@ def map_sku_from_inventory(item: dict) -> dict | None:
     }
 
 
-def map_sku_from_product(p: dict) -> dict | None:
+def map_sku_from_product(p: dict) -> Optional[dict]:
     sku = (p.get('sku') or '').strip()
     if not sku:
         return None
@@ -101,7 +102,7 @@ _STATUS_ALIASES = {'COMPLETED': 'DELIVERED'}
 # Matches SO suffix: -FPR, -FPR-R, -1PR, -1PR-R, -2PR, etc.
 _SO_SUFFIX_RE = re.compile(r'-([A-Z0-9]+PR(?:-R)?)$', re.IGNORECASE)
 
-def _return_type_from_so(so: str | None) -> str | None:
+def _return_type_from_so(so: Optional[str]) -> Optional[str]:
     """Derive return_type from SO number suffix."""
     if not so:
         return None
@@ -115,7 +116,7 @@ def _return_type_from_so(so: str | None) -> str | None:
         return 'pending_return'    # still with courier, not yet received
     return 'partial_return'        # 1PR, 2PR, 3PR — partial quantity returned
 
-def _normalize_status(status: str | None) -> str | None:
+def _normalize_status(status: Optional[str]) -> Optional[str]:
     if not status:
         return status
     return _STATUS_ALIASES.get(status.upper(), status)
@@ -152,7 +153,7 @@ def map_order(o: dict) -> dict:
     }
 
 
-def map_customer(o: dict) -> dict | None:
+def map_customer(o: dict) -> Optional[dict]:
     dist  = o.get('distributor') or {}
     phone = (dist.get('phone') or '').strip()
     if not phone:
