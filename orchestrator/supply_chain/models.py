@@ -121,6 +121,41 @@ def _rq_set_po_display(conn, po_id: str, display: str) -> None:
     """), {'disp': display, 'po_id': po_id})
 
 
+def _rq_sync_on_create(conn, po_id: str, products: list) -> None:
+    """
+    Link reorder_queue rows to a newly created PO.
+
+    For each product, strips the size suffix to recover sku_base and links any
+    unlinked reorder_queue row for that base product to the new PO.  Only rows
+    where the link is currently absent (po_created=FALSE or po_id IS NULL) are
+    touched — rows that already point at a live PO are left unchanged.
+    """
+    seen: set = set()
+    for p in products:
+        raw = (p.get('product_name') or '').strip()
+        # Strip " + N more" aggregate suffix (shouldn't be on individual items
+        # but guard defensively).
+        raw = re.sub(r'\s*\+\s*\d+\s+more\s*$', '', raw, flags=re.IGNORECASE).strip()
+        sku_base = _SIZE_RE_PY.sub('', raw).strip()
+        if not sku_base or sku_base in seen:
+            continue
+        seen.add(sku_base)
+        if _has_rq_display_col(conn):
+            conn.execute(text("""
+                UPDATE reorder_queue
+                SET po_created = TRUE, po_id = :po_id, po_status_display = 'Active'
+                WHERE sku_base = :sku_base
+                  AND (po_created = FALSE OR po_id IS NULL)
+            """), {'po_id': po_id, 'sku_base': sku_base})
+        else:
+            conn.execute(text("""
+                UPDATE reorder_queue
+                SET po_created = TRUE, po_id = :po_id
+                WHERE sku_base = :sku_base
+                  AND (po_created = FALSE OR po_id IS NULL)
+            """), {'po_id': po_id, 'sku_base': sku_base})
+
+
 # ── serialisation helpers ───────────────────────────────────────────────────
 
 def _conv(value):
@@ -494,6 +529,10 @@ def create_po(data):
             'note': note,
             'po_id2': po_id,
         })
+
+        # Sync reorder_queue so Inventory shows "View PO" instead of "Create PO"
+        # for this product after a PO is created directly from the SC module.
+        _rq_sync_on_create(conn, po_id, products)
 
         conn.commit()
 
