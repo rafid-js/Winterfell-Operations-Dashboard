@@ -2,11 +2,12 @@
 Meta Ads → Brain sync.
 
 Modes:
-  python -m sync.meta_sync --spend          sync last 7 days ad spend → ad_spend table
-  python -m sync.meta_sync --spend --days N sync last N days
+  python -m sync.meta_sync --spend                sync last 7 days ad spend → ad_spend table
+  python -m sync.meta_sync --spend --days N       sync last N days (first run only)
+  python -m sync.meta_sync --spend --since YYYY-MM-DD  force pull from a specific date
 
-Incremental: always re-pulls last 7 days (Meta adjusts numbers retroactively),
-then records the newest date in sync_log.
+Incremental: once synced, always re-pulls from last sync minus 2 days (Meta adjusts
+numbers retroactively). Use --since to override and force a historical backfill.
 """
 import sys
 import argparse
@@ -51,16 +52,19 @@ UPSERT_SPEND = text("""
 
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
-def sync_spend(days: int = 7):
+def sync_spend(days: int = 7, since_override: str = None):
     print(f"\n=== Meta Ads Spend → Brain  {datetime.now():%Y-%m-%d %H:%M} ===\n")
     log = SyncLog('meta', 'ad_spend')
 
-    since = log.last_record_at()
-    if since:
-        # Re-pull from last sync minus 2 days (Meta adjusts numbers retroactively)
-        start = (since - timedelta(days=2)).strftime('%Y-%m-%d')
+    if since_override:
+        start = since_override
     else:
-        start = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        since = log.last_record_at()
+        if since:
+            # Re-pull from last sync minus 2 days (Meta adjusts numbers retroactively)
+            start = (since - timedelta(days=2)).strftime('%Y-%m-%d')
+        else:
+            start = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
     end = datetime.now().strftime('%Y-%m-%d')
     print(f"  Pulling {start} → {end}\n")
@@ -130,7 +134,9 @@ if __name__ == '__main__':
     g.add_argument('--spend', action='store_true', help='Sync ad spend into ad_spend table')
     ap.add_argument('--days', type=int, default=7,
                     help='Days to pull on first run (default: 7)')
+    ap.add_argument('--since', type=str, default=None,
+                    help='Force pull from this date (YYYY-MM-DD), ignoring sync log')
     args = ap.parse_args()
 
     if args.spend:
-        sync_spend(days=args.days)
+        sync_spend(days=args.days, since_override=args.since)
