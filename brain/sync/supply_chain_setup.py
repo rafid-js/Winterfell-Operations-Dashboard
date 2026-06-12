@@ -195,6 +195,44 @@ MIGRATIONS_SQL = [
        BEFORE UPDATE ON reorder_queue
        FOR EACH ROW
        EXECUTE FUNCTION reset_po_created();""",
+
+    # ── one-time data repair: backfill reorder_queue rows that were created
+    # before the SC→Inventory sync was implemented. Finds the most recent
+    # active/delayed/at-risk PO whose product name (after stripping the size
+    # suffix) matches the sku_base, and links the row if it is currently
+    # unlinked.  Only rows with po_created=FALSE or po_id IS NULL are touched.
+    """WITH best_po AS (
+        SELECT DISTINCT ON (rq.sku_base)
+            rq.sku_base,
+            po.po_id,
+            po.po_status
+        FROM reorder_queue rq
+        JOIN purchase_orders po ON
+            TRIM(regexp_replace(
+                SPLIT_PART(po.product_name, ' + ', 1),
+                '\\s*-\\s*(XS|S|M|L|XL|2XL|XXL|3XL|XXXL|4XL|5XL|[2-5][0-9])(\\s*\\([^)]*\\))?\\s*$',
+                '',
+                'i'
+            )) = rq.sku_base
+        WHERE (rq.po_created = FALSE OR rq.po_id IS NULL)
+          AND po.po_status NOT IN ('Completed', 'Cancelled')
+        ORDER BY rq.sku_base, po.issued_date DESC
+    )
+    UPDATE reorder_queue rq
+    SET
+        po_created        = TRUE,
+        po_id             = best_po.po_id,
+        po_status_display = best_po.po_status
+    FROM best_po
+    WHERE rq.sku_base = best_po.sku_base
+      AND (rq.po_created = FALSE OR rq.po_id IS NULL);""",
+
+    # Clean up any stale po_id references that point to deleted POs (safety
+    # net in case the FK SET NULL didn't fire for pre-migration rows).
+    """UPDATE reorder_queue
+    SET po_created = FALSE, po_id = NULL, po_status_display = NULL
+    WHERE po_id IS NOT NULL
+      AND po_id NOT IN (SELECT po_id FROM purchase_orders);""",
 ]
 
 
