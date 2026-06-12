@@ -40,6 +40,7 @@ def job_reorder():     _run('orchestrator.cron_reorder')
 def job_true_demand(): _run('orchestrator.cron_true_demand')
 def job_size_intel():  _run('orchestrator.cron_size_intel')
 def job_test_batch():  _run('orchestrator.cron_test_batch')
+def job_meta():        _run('orchestrator.cron_meta')
 
 
 if __name__ == '__main__':
@@ -69,6 +70,9 @@ if __name__ == '__main__':
     sched.add_job(job_test_batch,  CronTrigger(hour=8, minute=0, timezone=TZ),
                   id='test_batch',  max_instances=1, misfire_grace_time=3600)
 
+    sched.add_job(job_meta,        IntervalTrigger(hours=6),
+                  id='meta',        max_instances=1, misfire_grace_time=3600)
+
     log.info('Winterfell cron worker started (timezone=%s)', TZ)
     log.info('  nuport_sync:    every 15 min')
     log.info('  wc_sync:        every 6h')
@@ -77,4 +81,5 @@ if __name__ == '__main__':
     log.info('  true_demand:    daily 07:00')
     log.info('  size_intel:     weekly Sun 06:00')
     log.info('  test_batch:     daily 08:00')
+    log.info('  meta_sync:      every 6h')
     sched.start()
