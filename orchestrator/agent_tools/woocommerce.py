@@ -13,15 +13,7 @@ WOOCOMMERCE_URL    = (os.getenv('WOOCOMMERCE_URL') or '').rstrip('/')
 WOOCOMMERCE_KEY    = os.getenv('WOOCOMMERCE_KEY')
 WOOCOMMERCE_SECRET = os.getenv('WOOCOMMERCE_SECRET')
 
-CATEGORY_IDS = {
-    'cargo-pants':       os.getenv('CAT_CARGO_PANTS'),
-    'drop-shoulder-tee': os.getenv('CAT_DROP_SHOULDER_TEE'),
-    'denim':             os.getenv('CAT_DENIM'),
-    'knit-polo':         os.getenv('CAT_KNIT_POLO'),
-    'jogger':            os.getenv('CAT_JOGGER'),
-    'jacket':            os.getenv('CAT_JACKET'),
-    'other':             os.getenv('CAT_OTHER'),
-}
+_category_id_cache = {}
 
 
 def _basic_auth_header() -> dict:
@@ -51,9 +43,37 @@ def upload_image(image_base64: str, filename: str = None) -> dict:
     return {"media_id": data["id"], "source_url": data.get("source_url")}
 
 
+def _resolve_category_id(category_slug: str):
+    """Look up a WooCommerce category id by slug via the REST API, creating it if missing."""
+    if not category_slug:
+        return None
+    if category_slug in _category_id_cache:
+        return _category_id_cache[category_slug]
+
+    r = requests.get(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/categories",
+        auth=_oauth1(), params={"slug": category_slug}, timeout=15,
+    )
+    r.raise_for_status()
+    matches = r.json()
+    if matches:
+        category_id = matches[0]["id"]
+    else:
+        name = category_slug.replace('-', ' ').title()
+        r = requests.post(
+            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/categories",
+            auth=_oauth1(), json={"name": name, "slug": category_slug}, timeout=15,
+        )
+        r.raise_for_status()
+        category_id = r.json()["id"]
+
+    _category_id_cache[category_slug] = category_id
+    return category_id
+
+
 def create_product(content: dict, media_id: int, category_slug: str, price: str = "0") -> dict:
     """Create a draft WooCommerce product. Returns {product_id, slug, preview_url}."""
-    category_id = CATEGORY_IDS.get(category_slug)
+    category_id = _resolve_category_id(category_slug)
     body = {
         "name":              content["product_name"],
         "status":            "draft",
