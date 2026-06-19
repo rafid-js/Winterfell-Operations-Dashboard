@@ -45,16 +45,21 @@ def telegram_webhook():
     update = request.get_json(silent=True) or {}
     message = update.get('message')
     if not message:
+        print(f"[telegram_webhook] no 'message' in update: {update}", flush=True)
         return jsonify({'ok': True})
 
     chat_id = message.get('chat', {}).get('id')
+    print(f"[telegram_webhook] received message from chat_id={chat_id!r} "
+          f"expected={telegram_alert.AGENT_CHAT_ID!r} keys={list(message.keys())}", flush=True)
     if not telegram_alert.is_authorized_chat(chat_id, telegram_alert.AGENT_CHAT_ID):
-        # Not Rafid — ignore silently.
+        print(f"[telegram_webhook] chat_id {chat_id!r} not authorized — ignoring.", flush=True)
         return jsonify({'ok': True})
 
     if 'photo' in message:
+        print("[telegram_webhook] dispatching _handle_photo", flush=True)
         threading.Thread(target=_handle_photo, args=(message,), daemon=True).start()
     elif 'text' in message:
+        print("[telegram_webhook] dispatching _handle_text", flush=True)
         threading.Thread(target=_handle_text, args=(message['text'],), daemon=True).start()
 
     return jsonify({'ok': True})
@@ -66,7 +71,9 @@ def _handle_photo(message: dict):
         largest = max(photo_sizes, key=lambda p: p.get('file_size', 0) or p.get('width', 0))
         caption = message.get('caption', '')
 
+        print("[_handle_photo] downloading photo...", flush=True)
         image_bytes = telegram_alert.download_photo(largest['file_id'], telegram_alert.AGENT_BOT_TOKEN)
+        print(f"[_handle_photo] downloaded {len(image_bytes)} bytes", flush=True)
         if len(image_bytes) > MAX_IMAGE_BYTES:
             telegram_alert.send("❌ Image too large (max 20MB). Send a smaller photo.",
                                  telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
@@ -74,8 +81,11 @@ def _handle_photo(message: dict):
 
         import base64
         image_data = {'base64': base64.b64encode(image_bytes).decode(), 'media_type': 'image/jpeg'}
+        print("[_handle_photo] calling product_agent.run_agent...", flush=True)
         product_agent.run_agent(caption, image_data)
+        print("[_handle_photo] run_agent finished", flush=True)
     except Exception as e:
+        print(f"[_handle_photo] EXCEPTION: {e!r}", flush=True)
         telegram_alert.send(f"❌ Could not process photo: {e}",
                              telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
 

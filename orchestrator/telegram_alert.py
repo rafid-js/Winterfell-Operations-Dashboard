@@ -21,6 +21,8 @@ def send(message: str, bot_token: str = None, chat_id: str = None) -> bool:
     bot_token = bot_token or BOT_TOKEN
     chat_id = chat_id or CHAT_ID
     if not bot_token or not chat_id:
+        print(f'  ⚠ Telegram send skipped — missing bot_token or chat_id '
+              f'(bot_token set={bool(bot_token)}, chat_id set={bool(chat_id)})', flush=True)
         return False
     try:
         r = requests.post(
@@ -28,9 +30,11 @@ def send(message: str, bot_token: str = None, chat_id: str = None) -> bool:
             json={'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'},
             timeout=10,
         )
+        if r.status_code != 200:
+            print(f'  ⚠ Telegram send failed: {r.status_code} {r.text}', flush=True)
         return r.status_code == 200
     except Exception as e:
-        print(f'  ⚠ Telegram alert failed: {e}')
+        print(f'  ⚠ Telegram alert failed: {e}', flush=True)
         return False
 
 
