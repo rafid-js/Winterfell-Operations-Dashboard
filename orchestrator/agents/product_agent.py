@@ -41,8 +41,7 @@ When you receive a product photo:
 1. First analyze the image
 2. Check if it looks like a fashion/clothing product — if not, tell Rafid and stop
 3. Generate all product content
-4. Upload the image to WooCommerce — pass the same media_type you used in analyze_product_image
-   (the image may be image/jpeg, image/png, or image/webp; don't assume jpeg)
+4. Upload the image to WooCommerce
 5. Stage the draft product for Rafid's approval (create_woocommerce_draft) — show him
    the generated content as a preview in your Telegram message and ask him to reply "yes"
 6. Once approved and the draft is created, it gets saved to Brain automatically
@@ -63,15 +62,12 @@ If anything fails, tell Rafid exactly what went wrong in plain language."""
 TOOLS = [
     {
         "name": "analyze_product_image",
-        "description": "Analyze a fashion product photo using Claude Vision. Returns product type, color, fit, fabric, style tags, and suggested WooCommerce category.",
+        "description": "Analyze the product photo Rafid just sent using Claude Vision. Returns product type, color, fit, fabric, style tags, and suggested WooCommerce category. The image itself is already attached to this conversation — do not pass it.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "image_base64": {"type": "string", "description": "Base64 encoded image"},
-                "media_type": {"type": "string", "description": "image/jpeg or image/png"},
                 "user_notes": {"type": "string", "description": "Optional notes from user caption e.g. price, fabric"},
             },
-            "required": ["image_base64", "media_type"],
         },
     },
     {
@@ -88,15 +84,12 @@ TOOLS = [
     },
     {
         "name": "upload_image_to_woocommerce",
-        "description": "Upload a product image to WooCommerce media library. Returns media ID.",
+        "description": "Upload the product photo already attached to this conversation to the WooCommerce media library. Returns media ID. Do not pass image data — it's looked up automatically.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "image_base64": {"type": "string"},
                 "filename": {"type": "string"},
-                "media_type": {"type": "string", "description": "e.g. image/jpeg, image/png, image/webp — same value passed to analyze_product_image"},
             },
-            "required": ["image_base64", "filename"],
         },
     },
     {
@@ -156,10 +149,10 @@ _GATE_ALIASES = {
 }
 
 
-def execute_tool(name: str, tool_input: dict) -> dict:
+def execute_tool(name: str, tool_input: dict, image_data: dict = None) -> dict:
     print(f"[execute_tool] {name} input_keys={list(tool_input.keys())}", flush=True)
     try:
-        result = _execute_tool(name, tool_input)
+        result = _execute_tool(name, tool_input, image_data)
     except Exception as e:
         print(f"[execute_tool] {name} EXCEPTION: {e!r}", flush=True)
         raise
@@ -167,15 +160,17 @@ def execute_tool(name: str, tool_input: dict) -> dict:
     return result
 
 
-def _execute_tool(name: str, tool_input: dict) -> dict:
+def _execute_tool(name: str, tool_input: dict, image_data: dict = None) -> dict:
     if name in _GATE_ALIASES:
         action_id = pending_actions.create(AGENT_NAME, _GATE_ALIASES[name], tool_input)
         return {"staged": True, "action_id": action_id,
                 "message": "Staged — will only run once Rafid replies 'yes'."}
 
     if name == "analyze_product_image":
+        if not image_data:
+            return {"error": "No image attached to this conversation."}
         return vision.analyze_product_image(
-            tool_input["image_base64"], tool_input["media_type"], tool_input.get("user_notes", "")
+            image_data["base64"], image_data["media_type"], tool_input.get("user_notes", "")
         )
 
     if name == "generate_product_content":
@@ -185,8 +180,10 @@ def _execute_tool(name: str, tool_input: dict) -> dict:
         )
 
     if name == "upload_image_to_woocommerce":
+        if not image_data:
+            return {"error": "No image attached to this conversation."}
         return woocommerce.upload_image(
-            tool_input["image_base64"], tool_input.get("filename"), tool_input.get("media_type", "image/jpeg")
+            image_data["base64"], tool_input.get("filename"), image_data["media_type"]
         )
 
     if name == "send_telegram_message":
@@ -236,7 +233,7 @@ def run_agent(user_message: str, image_data: dict = None):
         for block in response.content:
             if block.type == "tool_use":
                 try:
-                    result = execute_tool(block.name, block.input)
+                    result = execute_tool(block.name, block.input, image_data)
                 except Exception as e:
                     result = {"error": str(e)}
                 tool_results.append({
