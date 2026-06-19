@@ -1,12 +1,15 @@
 """Generate WooCommerce product content (Banglish copy, SEO, tags) with Claude."""
-import json
+import os
 import re
+import json
 
 from anthropic import Anthropic
+from dotenv import load_dotenv
 
-import config
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'brain', '.env'))
 
-_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+_client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+CONTENT_MODEL = 'claude-haiku-4-5-20251001'
 
 _SYSTEM_PROMPT = """You are the content writer for Winterfell, a Gen Z fast-fashion brand in Bangladesh.
 Write in casual Bangla/English mix (Banglish) that feels natural to 18-25 year old Bangladeshis.
@@ -41,10 +44,10 @@ def generate_product_content(product_data: dict, user_notes: str = "", memory_bl
         user_text += f"\n\nUser notes / overrides: {user_notes}"
 
     response = _client.messages.create(
-        model=config.CONTENT_MODEL,
+        model=CONTENT_MODEL,
         max_tokens=1024,
         system=system,
         messages=[{"role": "user", "content": user_text}],
     )
-    text = "".join(block.text for block in response.content if block.type == "text")
-    return _extract_json(text)
+    text_out = "".join(block.text for block in response.content if block.type == "text")
+    return _extract_json(text_out)

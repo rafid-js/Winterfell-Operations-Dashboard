@@ -332,6 +332,7 @@ INVENTORY_HTML = """<!doctype html>
     <a href="/orders" class="nav-link">Orders</a>
     <a href="/inventory" class="nav-link active">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
+    <a href="/agents" class="nav-link">Agents</a>
   </nav>
   <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
@@ -340,7 +341,7 @@ INVENTORY_HTML = """<!doctype html>
   <nav class="mob-nav" id="mnav">
     <a href="/">Operations</a><a href="/products">Products</a><a href="/customers">Customers</a>
     <a href="/orders">Orders</a><a href="/inventory" class="active">Inventory</a>
-    <a href="/supply-chain">Supply Chain</a><a href="/logout">Logout</a>
+    <a href="/supply-chain">Supply Chain</a><a href="/agents">Agents</a><a href="/logout">Logout</a>
   </nav>
 </header>
 <div class="container">

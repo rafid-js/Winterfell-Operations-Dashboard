@@ -1,9 +1,0 @@
-fastapi
-uvicorn
-anthropic
-psycopg2-binary
-requests
-requests-oauthlib
-httpx
-python-dotenv
-apscheduler

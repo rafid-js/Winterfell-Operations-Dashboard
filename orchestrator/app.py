@@ -43,6 +43,10 @@ app.register_blueprint(sc_bp)
 from inventory import inv_bp
 app.register_blueprint(inv_bp)
 
+# ── Agents blueprint ─────────────────────────────────────────────────────────
+from agents_routes import agents_bp
+app.register_blueprint(agents_bp)
+
 DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'winterfell')
 
 # Maps script_name → cron module path
@@ -607,6 +611,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <a href="/orders" class="nav-link">Orders</a>
     <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
+    <a href="/agents" class="nav-link">Agents</a>
   </nav>
   <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
@@ -621,6 +626,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <a href="/orders">Orders</a>
     <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
+    <a href="/agents">Agents</a>
     <a href="/logout">Logout</a>
   </nav>
 </header>
@@ -903,6 +909,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/orders" class="nav-link">Orders</a>
     <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
+    <a href="/agents" class="nav-link">Agents</a>
   </nav>
   <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
@@ -917,6 +924,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/orders">Orders</a>
     <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
+    <a href="/agents">Agents</a>
     <a href="/logout">Logout</a>
   </nav>
 </header>
@@ -1324,6 +1332,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/orders" class="nav-link">Orders</a>
     <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
+    <a href="/agents" class="nav-link">Agents</a>
   </nav>
   <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
@@ -1338,6 +1347,7 @@ td.rev{color:var(--text-primary);font-weight:500}
     <a href="/orders">Orders</a>
     <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
+    <a href="/agents">Agents</a>
     <a href="/logout">Logout</a>
   </nav>
 </header>
@@ -1729,6 +1739,7 @@ tbody td.r{text-align:right;white-space:nowrap}
     <a href="/orders" class="nav-link active">Orders</a>
     <a href="/inventory" class="nav-link">Inventory</a>
     <a href="/supply-chain" class="nav-link">Supply Chain</a>
+    <a href="/agents" class="nav-link">Agents</a>
   </nav>
   <div class="hdr-actions">
     <a href="/logout" class="logout">Logout</a>
@@ -1743,6 +1754,7 @@ tbody td.r{text-align:right;white-space:nowrap}
     <a href="/orders" class="active">Orders</a>
     <a href="/inventory">Inventory</a>
     <a href="/supply-chain">Supply Chain</a>
+    <a href="/agents">Agents</a>
     <a href="/logout">Logout</a>
   </nav>
 </header>

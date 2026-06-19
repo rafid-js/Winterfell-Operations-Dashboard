@@ -1,12 +1,15 @@
 """Analyze a product photo with Claude Vision."""
-import json
+import os
 import re
+import json
 
 from anthropic import Anthropic
+from dotenv import load_dotenv
 
-import config
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'brain', '.env'))
 
-_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+_client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+VISION_MODEL = 'claude-sonnet-4-6'
 
 _SYSTEM_PROMPT = """You are a product analyst for Winterfell, a Gen Z streetwear brand in Bangladesh.
 Analyze this product photo and return ONLY valid JSON, no other text.
@@ -39,7 +42,7 @@ def analyze_product_image(image_base64: str, media_type: str, user_notes: str = 
         user_text += f"\n\nUser notes: {user_notes}"
 
     response = _client.messages.create(
-        model=config.VISION_MODEL,
+        model=VISION_MODEL,
         max_tokens=1024,
         system=_SYSTEM_PROMPT,
         messages=[{
@@ -50,5 +53,5 @@ def analyze_product_image(image_base64: str, media_type: str, user_notes: str = 
             ],
         }],
     )
-    text = "".join(block.text for block in response.content if block.type == "text")
-    return _extract_json(text)
+    text_out = "".join(block.text for block in response.content if block.type == "text")
+    return _extract_json(text_out)

@@ -1,26 +1,28 @@
 """
 Product Agent — Winterfell's first agent.
 
-Pipeline: photo in → Claude Vision analysis → generated content → (confirm) →
-WooCommerce draft + Brain save → Telegram review message → (confirm) → publish/delete.
+Pipeline: photo in → Claude Vision analysis → generated content → (approve) →
+WooCommerce draft + Brain save → Telegram review message → (approve) → publish/delete.
 
 Gated actions (create_woocommerce_draft, publish_product, delete_product) are never
 executed directly by the tool loop. They're staged as a pending_action and only run
-once Rafid replies "yes" — see confirm_pending_action() below.
+once Rafid replies "yes" on Telegram or clicks Approve on the Agents dashboard page —
+see confirm_pending_action() below.
 """
+import os
 import json
 
 from anthropic import Anthropic
+from dotenv import load_dotenv
 
-import config
-from memory import memory
-from tools import vision, content as content_tool, woocommerce, brain, telegram
+from orchestrator import pending_actions, agent_memory, telegram_alert
+from orchestrator.agent_tools import vision, content as content_tool, woocommerce, brain as agent_brain
 
-_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'brain', '.env'))
 
+_client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+AGENT_MODEL = 'claude-sonnet-4-6'
 AGENT_NAME = "product_agent"
-
-GATED_TOOLS = {"create_woocommerce_draft", "publish_product", "delete_product"}
 
 SYSTEM_PROMPT = """You are the Winterfell Agent — an AI assistant that manages product operations
 for Winterfell, a Gen Z streetwear brand in Bangladesh.
@@ -36,9 +38,8 @@ When you receive a product photo:
 4. Upload the image to WooCommerce
 5. Stage the draft product for Rafid's approval (create_woocommerce_draft) — show him
    the generated content as a preview in your Telegram message and ask him to reply "yes"
-6. Once approved and the draft is created, save it to Brain
-7. Send Rafid a review message with the preview link, and tell him he can reply
-   "publish [id]", "price [id] [amount]", or "delete [id]"
+6. Once approved and the draft is created, it gets saved to Brain automatically
+7. Tell Rafid he can reply "publish [id]", "price [id] [amount]", or "delete [id]"
 
 When you receive a command:
 - "publish [id]" → stage publish_product, ask Rafid to confirm with "yes"
@@ -105,25 +106,6 @@ TOOLS = [
         },
     },
     {
-        "name": "save_product_to_brain",
-        "description": "Save new product record to Winterfell Brain PostgreSQL database.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "woo_id": {"type": "integer"},
-                "name": {"type": "string"},
-                "category": {"type": "string"},
-                "color_primary": {"type": "string"},
-                "color_secondary": {"type": "string"},
-                "style_tags": {"type": "array", "items": {"type": "string"}},
-                "fabric": {"type": "string"},
-                "gender_target": {"type": "string"},
-                "price": {"type": "integer"},
-            },
-            "required": ["woo_id", "name", "category"],
-        },
-    },
-    {
         "name": "send_telegram_message",
         "description": "Send a message to Rafid on Telegram.",
         "input_schema": {
@@ -159,24 +141,18 @@ TOOLS = [
     },
 ]
 
-# Map the "publish"/"delete" tool names Claude sees to the gated action types we
-# actually stage and execute on confirmation.
 _GATE_ALIASES = {
+    "create_woocommerce_draft": "create_woocommerce_draft",
     "publish_woocommerce_product": "publish_product",
     "delete_woocommerce_product": "delete_product",
-    "create_woocommerce_draft": "create_woocommerce_draft",
 }
 
 
-async def execute_tool(name: str, tool_input: dict) -> dict:
+def execute_tool(name: str, tool_input: dict) -> dict:
     if name in _GATE_ALIASES:
-        action_type = _GATE_ALIASES[name]
-        action_id = brain.create_pending_action(AGENT_NAME, action_type, tool_input)
-        return {
-            "staged": True,
-            "action_id": action_id,
-            "message": "Staged — will only run once Rafid replies 'yes'.",
-        }
+        action_id = pending_actions.create(AGENT_NAME, _GATE_ALIASES[name], tool_input)
+        return {"staged": True, "action_id": action_id,
+                "message": "Staged — will only run once Rafid replies 'yes'."}
 
     if name == "analyze_product_image":
         return vision.analyze_product_image(
@@ -184,7 +160,7 @@ async def execute_tool(name: str, tool_input: dict) -> dict:
         )
 
     if name == "generate_product_content":
-        memory_block = memory.memories_as_prompt_block(memory_type="content")
+        memory_block = agent_memory.memories_as_prompt_block(AGENT_NAME, memory_type="content")
         return content_tool.generate_product_content(
             tool_input["product_data"], tool_input.get("user_notes", ""), memory_block
         )
@@ -192,12 +168,8 @@ async def execute_tool(name: str, tool_input: dict) -> dict:
     if name == "upload_image_to_woocommerce":
         return woocommerce.upload_image(tool_input["image_base64"], tool_input.get("filename"))
 
-    if name == "save_product_to_brain":
-        brain.save_product(tool_input)
-        return {"saved": True}
-
     if name == "send_telegram_message":
-        await telegram.send_message(tool_input["message"])
+        telegram_alert.send(tool_input["message"])
         return {"sent": True}
 
     return {"error": f"Unknown tool: {name}"}
@@ -214,20 +186,17 @@ def _build_initial_message(user_message: str, image_data: dict = None) -> dict:
     return {"role": "user", "content": content}
 
 
-async def run_agent(user_message: str, image_data: dict = None):
+def run_agent(user_message: str, image_data: dict = None):
     """Drive the Claude tool-use loop until it stops calling tools."""
-    memory_block = memory.memories_as_prompt_block()
+    memory_block = agent_memory.memories_as_prompt_block(AGENT_NAME)
     system = SYSTEM_PROMPT if not memory_block else f"{SYSTEM_PROMPT}\n\n{memory_block}"
 
     messages = [_build_initial_message(user_message, image_data)]
 
     for _ in range(10):  # safety cap on tool-call rounds
         response = _client.messages.create(
-            model=config.AGENT_MODEL,
-            max_tokens=4096,
-            tools=TOOLS,
-            system=system,
-            messages=messages,
+            model=AGENT_MODEL, max_tokens=4096,
+            tools=TOOLS, system=system, messages=messages,
         )
 
         if response.stop_reason != "tool_use":
@@ -236,23 +205,24 @@ async def run_agent(user_message: str, image_data: dict = None):
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
-                result = await execute_tool(block.name, block.input)
+                try:
+                    result = execute_tool(block.name, block.input)
+                except Exception as e:
+                    result = {"error": str(e)}
                 tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(result),
+                    "type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result),
                 })
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
 
 
-async def confirm_pending_action(correction_text: str = ""):
-    """Rafid replied 'yes' (possibly with a correction) — execute the staged action for real."""
-    action = brain.get_latest_pending_action(AGENT_NAME)
+def confirm_pending_action(action_id: int = None, correction_text: str = ""):
+    """Rafid approved (possibly with a correction) — execute the staged action for real."""
+    action = pending_actions.get_by_id(action_id) if action_id else pending_actions.get_latest(AGENT_NAME)
     if not action:
-        await telegram.send_message("⚠️ Nothing pending to confirm.")
-        return
+        telegram_alert.send("⚠️ Nothing pending to confirm.")
+        return {"error": "no pending action"}
 
     action_type = action["action_type"]
     payload = action["payload"]
@@ -263,53 +233,54 @@ async def confirm_pending_action(correction_text: str = ""):
         if action_type == "create_woocommerce_draft":
             result = woocommerce.create_product(
                 payload["content"], payload["media_id"],
-                config.CATEGORY_IDS.get(payload.get("category_slug", "other")),
-                payload.get("price", "0"),
+                payload.get("category_slug", "other"), payload.get("price", "0"),
             )
-            brain.save_product({
+            agent_brain.save_product({
                 "woo_id":   result["product_id"],
                 "name":     payload["content"]["product_name"],
                 "category": payload.get("category_slug"),
                 "price":    int(payload.get("price") or 0),
             })
-            await telegram.send_message(
-                f"✅ *Draft created*\n{payload['content']['product_name']}\n"
+            telegram_alert.send(
+                f"✅ Draft created\n{payload['content']['product_name']}\n"
                 f"Preview: {result['preview_url']}\n\n"
-                f"Reply `publish {result['product_id']}` or `price {result['product_id']} 1100` to go live."
+                f"Reply 'publish {result['product_id']}' or 'price {result['product_id']} 1100' to go live."
             )
 
         elif action_type == "publish_product":
             result = woocommerce.publish_product(payload["product_id"], payload.get("price"))
-            brain.update_product_status(
+            agent_brain.update_product_status(
                 payload["product_id"], "publish",
                 int(payload["price"]) if payload.get("price") else None,
             )
-            await telegram.send_message(f"✅ Published: {result['permalink']}")
+            telegram_alert.send(f"✅ Published: {result['permalink']}")
 
         elif action_type == "delete_product":
             woocommerce.delete_product(payload["product_id"])
-            brain.delete_product(payload["product_id"])
-            await telegram.send_message(f"✅ Deleted product {payload['product_id']}")
+            agent_brain.delete_product(payload["product_id"])
+            telegram_alert.send(f"✅ Deleted product {payload['product_id']}")
 
-        brain.resolve_pending_action(action["id"], "confirmed")
+        pending_actions.resolve(action["id"], "confirmed")
 
     except Exception as e:
-        brain.resolve_pending_action(action["id"], "failed")
-        await telegram.send_message(f"❌ Action failed: {e}")
-        return
+        pending_actions.resolve(action["id"], "failed")
+        telegram_alert.send(f"❌ Action failed: {e}")
+        return {"error": str(e)}
 
     if correction_text:
-        memory.save_memory(
-            memory_type="content",
+        agent_memory.save_memory(
+            AGENT_NAME, memory_type="content",
             context=f"{action_type}: {json.dumps(payload)[:300]}",
-            learning=correction_text,
-            confidence=0.6,
+            learning=correction_text, confidence=0.6,
         )
 
+    return {"ok": True}
 
-async def reject_pending_action():
-    action = brain.get_latest_pending_action(AGENT_NAME)
+
+def reject_pending_action(action_id: int = None):
+    action = pending_actions.get_by_id(action_id) if action_id else pending_actions.get_latest(AGENT_NAME)
     if not action:
-        return
-    brain.resolve_pending_action(action["id"], "rejected")
-    await telegram.send_message("❌ Cancelled.")
+        return {"error": "no pending action"}
+    pending_actions.resolve(action["id"], "rejected")
+    telegram_alert.send("❌ Cancelled.")
+    return {"ok": True}
