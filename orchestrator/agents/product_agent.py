@@ -24,6 +24,12 @@ _client = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 AGENT_MODEL = 'claude-sonnet-4-6'
 AGENT_NAME = "product_agent"
 
+
+def _agent_send(message: str) -> bool:
+    """Send via the agent's own bot/chat (falls back to the main bot if unset)."""
+    return telegram_alert.send(message, telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
+
+
 SYSTEM_PROMPT = """You are the Winterfell Agent — an AI assistant that manages product operations
 for Winterfell, a Gen Z streetwear brand in Bangladesh.
 
@@ -169,7 +175,7 @@ def execute_tool(name: str, tool_input: dict) -> dict:
         return woocommerce.upload_image(tool_input["image_base64"], tool_input.get("filename"))
 
     if name == "send_telegram_message":
-        telegram_alert.send(tool_input["message"])
+        _agent_send(tool_input["message"])
         return {"sent": True}
 
     return {"error": f"Unknown tool: {name}"}
@@ -221,7 +227,7 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
     """Rafid approved (possibly with a correction) — execute the staged action for real."""
     action = pending_actions.get_by_id(action_id) if action_id else pending_actions.get_latest(AGENT_NAME)
     if not action:
-        telegram_alert.send("⚠️ Nothing pending to confirm.")
+        _agent_send("⚠️ Nothing pending to confirm.")
         return {"error": "no pending action"}
 
     action_type = action["action_type"]
@@ -241,7 +247,7 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
                 "category": payload.get("category_slug"),
                 "price":    int(payload.get("price") or 0),
             })
-            telegram_alert.send(
+            _agent_send(
                 f"✅ Draft created\n{payload['content']['product_name']}\n"
                 f"Preview: {result['preview_url']}\n\n"
                 f"Reply 'publish {result['product_id']}' or 'price {result['product_id']} 1100' to go live."
@@ -253,18 +259,18 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
                 payload["product_id"], "publish",
                 int(payload["price"]) if payload.get("price") else None,
             )
-            telegram_alert.send(f"✅ Published: {result['permalink']}")
+            _agent_send(f"✅ Published: {result['permalink']}")
 
         elif action_type == "delete_product":
             woocommerce.delete_product(payload["product_id"])
             agent_brain.delete_product(payload["product_id"])
-            telegram_alert.send(f"✅ Deleted product {payload['product_id']}")
+            _agent_send(f"✅ Deleted product {payload['product_id']}")
 
         pending_actions.resolve(action["id"], "confirmed")
 
     except Exception as e:
         pending_actions.resolve(action["id"], "failed")
-        telegram_alert.send(f"❌ Action failed: {e}")
+        _agent_send(f"❌ Action failed: {e}")
         return {"error": str(e)}
 
     if correction_text:
@@ -282,5 +288,5 @@ def reject_pending_action(action_id: int = None):
     if not action:
         return {"error": "no pending action"}
     pending_actions.resolve(action["id"], "rejected")
-    telegram_alert.send("❌ Cancelled.")
+    _agent_send("❌ Cancelled.")
     return {"ok": True}

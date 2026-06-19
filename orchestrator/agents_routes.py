@@ -48,7 +48,7 @@ def telegram_webhook():
         return jsonify({'ok': True})
 
     chat_id = message.get('chat', {}).get('id')
-    if not telegram_alert.is_authorized_chat(chat_id):
+    if not telegram_alert.is_authorized_chat(chat_id, telegram_alert.AGENT_CHAT_ID):
         # Not Rafid — ignore silently.
         return jsonify({'ok': True})
 
@@ -66,16 +66,18 @@ def _handle_photo(message: dict):
         largest = max(photo_sizes, key=lambda p: p.get('file_size', 0) or p.get('width', 0))
         caption = message.get('caption', '')
 
-        image_bytes = telegram_alert.download_photo(largest['file_id'])
+        image_bytes = telegram_alert.download_photo(largest['file_id'], telegram_alert.AGENT_BOT_TOKEN)
         if len(image_bytes) > MAX_IMAGE_BYTES:
-            telegram_alert.send("❌ Image too large (max 20MB). Send a smaller photo.")
+            telegram_alert.send("❌ Image too large (max 20MB). Send a smaller photo.",
+                                 telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
             return
 
         import base64
         image_data = {'base64': base64.b64encode(image_bytes).decode(), 'media_type': 'image/jpeg'}
         product_agent.run_agent(caption, image_data)
     except Exception as e:
-        telegram_alert.send(f"❌ Could not process photo: {e}")
+        telegram_alert.send(f"❌ Could not process photo: {e}",
+                             telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
 
 
 def _handle_text(text: str):
