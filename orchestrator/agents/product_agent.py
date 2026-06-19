@@ -157,6 +157,17 @@ _GATE_ALIASES = {
 
 
 def execute_tool(name: str, tool_input: dict) -> dict:
+    print(f"[execute_tool] {name} input_keys={list(tool_input.keys())}", flush=True)
+    try:
+        result = _execute_tool(name, tool_input)
+    except Exception as e:
+        print(f"[execute_tool] {name} EXCEPTION: {e!r}", flush=True)
+        raise
+    print(f"[execute_tool] {name} result={json.dumps(result)[:300]}", flush=True)
+    return result
+
+
+def _execute_tool(name: str, tool_input: dict) -> dict:
     if name in _GATE_ALIASES:
         action_id = pending_actions.create(AGENT_NAME, _GATE_ALIASES[name], tool_input)
         return {"staged": True, "action_id": action_id,
@@ -212,12 +223,13 @@ def run_agent(user_message: str, image_data: dict = None):
             kwargs["tool_choice"] = {"type": "any"}
         response = _client.messages.create(**kwargs)
 
+        print(f"[run_agent] round={round_num} stop_reason={response.stop_reason}", flush=True)
+
         if response.stop_reason != "tool_use":
             # The model ended its turn with plain text instead of calling
             # send_telegram_message — send it anyway so Rafid isn't left hanging.
             closing_text = "".join(block.text for block in response.content if block.type == "text").strip()
-            if closing_text:
-                _agent_send(closing_text)
+            _agent_send(closing_text or "⚠️ Finished processing but had nothing to report — check the /agents dashboard.")
             break
 
         tool_results = []
