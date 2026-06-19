@@ -27,7 +27,7 @@ def send(message: str, bot_token: str = None, chat_id: str = None) -> bool:
     try:
         r = requests.post(
             f'https://api.telegram.org/bot{bot_token}/sendMessage',
-            json={'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'},
+            json={'chat_id': chat_id, 'text': message},
             timeout=10,
         )
         if r.status_code != 200:
