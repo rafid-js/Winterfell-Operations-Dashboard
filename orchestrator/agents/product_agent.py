@@ -41,7 +41,8 @@ When you receive a product photo:
 1. First analyze the image
 2. Check if it looks like a fashion/clothing product — if not, tell Rafid and stop
 3. Generate all product content
-4. Upload the image to WooCommerce
+4. Upload the image to WooCommerce — pass the same media_type you used in analyze_product_image
+   (the image may be image/jpeg, image/png, or image/webp; don't assume jpeg)
 5. Stage the draft product for Rafid's approval (create_woocommerce_draft) — show him
    the generated content as a preview in your Telegram message and ask him to reply "yes"
 6. Once approved and the draft is created, it gets saved to Brain automatically
@@ -93,6 +94,7 @@ TOOLS = [
             "properties": {
                 "image_base64": {"type": "string"},
                 "filename": {"type": "string"},
+                "media_type": {"type": "string", "description": "e.g. image/jpeg, image/png, image/webp — same value passed to analyze_product_image"},
             },
             "required": ["image_base64", "filename"],
         },
@@ -172,7 +174,9 @@ def execute_tool(name: str, tool_input: dict) -> dict:
         )
 
     if name == "upload_image_to_woocommerce":
-        return woocommerce.upload_image(tool_input["image_base64"], tool_input.get("filename"))
+        return woocommerce.upload_image(
+            tool_input["image_base64"], tool_input.get("filename"), tool_input.get("media_type", "image/jpeg")
+        )
 
     if name == "send_telegram_message":
         _agent_send(tool_input["message"])

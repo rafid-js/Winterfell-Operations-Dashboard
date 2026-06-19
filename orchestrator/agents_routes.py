@@ -55,9 +55,19 @@ def telegram_webhook():
         print(f"[telegram_webhook] chat_id {chat_id!r} not authorized — ignoring.", flush=True)
         return jsonify({'ok': True})
 
+    document = message.get('document')
+    is_image_document = document and (document.get('mime_type') or '').startswith('image/')
+
     if 'photo' in message:
         print("[telegram_webhook] dispatching _handle_photo", flush=True)
         threading.Thread(target=_handle_photo, args=(message,), daemon=True).start()
+    elif is_image_document:
+        print("[telegram_webhook] dispatching _handle_document", flush=True)
+        threading.Thread(target=_handle_document, args=(message,), daemon=True).start()
+    elif document:
+        print(f"[telegram_webhook] ignoring non-image document mime_type={document.get('mime_type')!r}", flush=True)
+        telegram_alert.send("❌ That file isn't an image — send a photo or an image file (jpg/png/webp).",
+                             telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
     elif 'text' in message:
         print("[telegram_webhook] dispatching _handle_text", flush=True)
         threading.Thread(target=_handle_text, args=(message['text'],), daemon=True).start()
@@ -65,28 +75,51 @@ def telegram_webhook():
     return jsonify({'ok': True})
 
 
+SUPPORTED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+
+
+def _process_image(file_id: str, media_type: str, caption: str):
+    image_bytes = telegram_alert.download_photo(file_id, telegram_alert.AGENT_BOT_TOKEN)
+    print(f"[_process_image] downloaded {len(image_bytes)} bytes, media_type={media_type}", flush=True)
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        telegram_alert.send("❌ Image too large (max 20MB). Send a smaller file.",
+                             telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
+        return
+
+    import base64
+    image_data = {'base64': base64.b64encode(image_bytes).decode(), 'media_type': media_type}
+    print("[_process_image] calling product_agent.run_agent...", flush=True)
+    product_agent.run_agent(caption, image_data)
+    print("[_process_image] run_agent finished", flush=True)
+
+
 def _handle_photo(message: dict):
     try:
         photo_sizes = message['photo']
         largest = max(photo_sizes, key=lambda p: p.get('file_size', 0) or p.get('width', 0))
         caption = message.get('caption', '')
-
         print("[_handle_photo] downloading photo...", flush=True)
-        image_bytes = telegram_alert.download_photo(largest['file_id'], telegram_alert.AGENT_BOT_TOKEN)
-        print(f"[_handle_photo] downloaded {len(image_bytes)} bytes", flush=True)
-        if len(image_bytes) > MAX_IMAGE_BYTES:
-            telegram_alert.send("❌ Image too large (max 20MB). Send a smaller photo.",
-                                 telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
-            return
-
-        import base64
-        image_data = {'base64': base64.b64encode(image_bytes).decode(), 'media_type': 'image/jpeg'}
-        print("[_handle_photo] calling product_agent.run_agent...", flush=True)
-        product_agent.run_agent(caption, image_data)
-        print("[_handle_photo] run_agent finished", flush=True)
+        _process_image(largest['file_id'], 'image/jpeg', caption)
     except Exception as e:
         print(f"[_handle_photo] EXCEPTION: {e!r}", flush=True)
         telegram_alert.send(f"❌ Could not process photo: {e}",
+                             telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
+
+
+def _handle_document(message: dict):
+    try:
+        document = message['document']
+        mime_type = document.get('mime_type') or 'image/jpeg'
+        if mime_type not in SUPPORTED_IMAGE_TYPES:
+            telegram_alert.send(f"❌ Unsupported image type: {mime_type}. Use jpg, png, webp, or gif.",
+                                 telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
+            return
+        caption = message.get('caption', '')
+        print(f"[_handle_document] downloading document, mime_type={mime_type}...", flush=True)
+        _process_image(document['file_id'], mime_type, caption)
+    except Exception as e:
+        print(f"[_handle_document] EXCEPTION: {e!r}", flush=True)
+        telegram_alert.send(f"❌ Could not process file: {e}",
                              telegram_alert.AGENT_BOT_TOKEN, telegram_alert.AGENT_CHAT_ID)
 
 

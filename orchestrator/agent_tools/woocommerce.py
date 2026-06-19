@@ -25,13 +25,14 @@ def _oauth1():
     return OAuth1(WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET)
 
 
-def upload_image(image_base64: str, filename: str = None) -> dict:
+def upload_image(image_base64: str, filename: str = None, media_type: str = "image/jpeg") -> dict:
     """Upload an image to the WordPress media library. Returns {media_id, source_url}."""
     image_bytes = base64.b64decode(image_base64)
-    filename = filename or f"wf-product-{int(time.time())}.jpg"
+    ext = (media_type or "image/jpeg").split('/')[-1]
+    filename = filename or f"wf-product-{int(time.time())}.{ext}"
 
     headers = _basic_auth_header()
-    headers["Content-Type"] = "image/jpeg"
+    headers["Content-Type"] = media_type or "image/jpeg"
     headers["Content-Disposition"] = f'attachment; filename="{filename}"'
 
     r = requests.post(
