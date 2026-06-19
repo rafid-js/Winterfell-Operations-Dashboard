@@ -113,6 +113,15 @@ def sync_spend(days: int = 7, since_override: str = None):
         else:
             start = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
+    # Meta's Insights API only serves data from the last 37 months — this is a
+    # lookback window measured from *today*, not a per-request range-width cap,
+    # so chunking alone doesn't help with dates older than this.
+    oldest_allowed = (datetime.now() - timedelta(days=37 * 30)).strftime('%Y-%m-%d')
+    if start < oldest_allowed:
+        print(f"  Note: requested start {start} is older than Meta's 37-month "
+              f"lookback limit — clamping to {oldest_allowed}\n")
+        start = oldest_allowed
+
     end = datetime.now().strftime('%Y-%m-%d')
     print(f"  Pulling {start} → {end}\n")
 
