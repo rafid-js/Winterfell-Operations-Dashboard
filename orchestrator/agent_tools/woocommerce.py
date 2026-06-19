@@ -13,11 +13,17 @@ WOOCOMMERCE_URL    = (os.getenv('WOOCOMMERCE_URL') or '').rstrip('/')
 WOOCOMMERCE_KEY    = os.getenv('WOOCOMMERCE_KEY')
 WOOCOMMERCE_SECRET = os.getenv('WOOCOMMERCE_SECRET')
 
+# wp/v2/media is a WordPress-core endpoint, not WooCommerce — it doesn't accept
+# WooCommerce's consumer key/secret. It needs a WP Application Password instead
+# (wp-admin → Users → Profile → Application Passwords).
+WP_USERNAME     = os.getenv('WP_USERNAME')
+WP_APP_PASSWORD = os.getenv('WP_APP_PASSWORD')
+
 _category_id_cache = {}
 
 
 def _basic_auth_header() -> dict:
-    token = base64.b64encode(f"{WOOCOMMERCE_KEY}:{WOOCOMMERCE_SECRET}".encode()).decode()
+    token = base64.b64encode(f"{WP_USERNAME}:{WP_APP_PASSWORD}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
 
@@ -27,6 +33,12 @@ def _oauth1():
 
 def upload_image(image_base64: str, filename: str = None, media_type: str = "image/jpeg") -> dict:
     """Upload an image to the WordPress media library. Returns {media_id, source_url}."""
+    if not WP_USERNAME or not WP_APP_PASSWORD:
+        raise RuntimeError(
+            "WP_USERNAME / WP_APP_PASSWORD not configured — generate a WordPress "
+            "Application Password (wp-admin → Users → Profile → Application Passwords) "
+            "and set both env vars."
+        )
     image_bytes = base64.b64decode(image_base64)
     ext = (media_type or "image/jpeg").split('/')[-1]
     filename = filename or f"wf-product-{int(time.time())}.{ext}"
