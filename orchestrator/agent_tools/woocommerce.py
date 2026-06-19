@@ -45,6 +45,11 @@ def _basic_auth_header() -> dict:
 
 
 def _oauth1():
+    if not WOOCOMMERCE_KEY or not WOOCOMMERCE_SECRET:
+        raise RuntimeError(
+            "WOOCOMMERCE_KEY / WOOCOMMERCE_SECRET not configured — set both env vars "
+            "(WooCommerce → Settings → Advanced → REST API)."
+        )
     return OAuth1(WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET)
 
 
@@ -140,6 +145,18 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
         "slug":        data.get("slug"),
         "preview_url": f"{WOOCOMMERCE_URL}/?p={data['id']}&preview=true",
     }
+
+
+def update_product_category(product_id: int, category_slug: str) -> dict:
+    """Re-categorize an existing product. Returns {category}."""
+    category_id = _resolve_category_id(category_slug)
+    r = requests.put(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}",
+        auth=_oauth1(), json={"categories": [{"id": int(category_id)}] if category_id else []},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return {"category": category_slug}
 
 
 def publish_product(product_id: int, price: str = None) -> dict:

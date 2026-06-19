@@ -44,6 +44,14 @@ def update_product_status(woo_id: int, status: str, price: int = None):
         conn.commit()
 
 
+def update_product_category(woo_id: int, category: str):
+    with get_connection() as conn:
+        conn.execute(text(
+            "UPDATE agent_products SET category = :category WHERE woo_id = :woo_id"
+        ), {'category': category, 'woo_id': woo_id})
+        conn.commit()
+
+
 def delete_product(woo_id: int):
     with get_connection() as conn:
         conn.execute(text("DELETE FROM agent_products WHERE woo_id = :woo_id"), {'woo_id': woo_id})

@@ -51,10 +51,15 @@ When you receive a command:
 - "publish [id]" → stage publish_product, ask Rafid to confirm with "yes"
 - "price [id] [amount]" → stage publish_product with that price, ask Rafid to confirm
 - "delete [id]" → stage delete_product, ask Rafid to confirm
+- "category [id] [slug]" → stage update_product_category, ask Rafid to confirm
+- A correction with no product id (e.g. "category should be drop shoulder polo") and no
+  image attached → you have no way to know which product it's about. Ask Rafid to resend
+  it as "category [id] [slug]" using the id from the draft/confirmation message.
 - Anything else → tell Rafid you did not understand, list what you can do
 
-create_woocommerce_draft, publish_product, and delete_product are gated — calling them
-only stages the action and asks Rafid to confirm. They do not execute until he replies "yes".
+create_woocommerce_draft, publish_product, delete_product, and update_product_category are
+gated — calling them only stages the action and asks Rafid to confirm. They do not execute
+until he replies "yes".
 
 Always send a Telegram message at the end so Rafid knows what happened.
 If anything fails, tell Rafid exactly what went wrong in plain language."""
@@ -140,12 +145,25 @@ TOOLS = [
             "required": ["product_id"],
         },
     },
+    {
+        "name": "update_product_category",
+        "description": "Stage re-categorizing an existing WooCommerce product, for Rafid's approval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "product_id": {"type": "integer"},
+                "category_slug": {"type": "string", "description": "e.g. drop-shoulder-polo"},
+            },
+            "required": ["product_id", "category_slug"],
+        },
+    },
 ]
 
 _GATE_ALIASES = {
     "create_woocommerce_draft": "create_woocommerce_draft",
     "publish_woocommerce_product": "publish_product",
     "delete_woocommerce_product": "delete_product",
+    "update_product_category": "update_category",
 }
 
 
@@ -288,6 +306,11 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
             woocommerce.delete_product(payload["product_id"])
             agent_brain.delete_product(payload["product_id"])
             _agent_send(f"✅ Deleted product {payload['product_id']}")
+
+        elif action_type == "update_category":
+            result = woocommerce.update_product_category(payload["product_id"], payload["category_slug"])
+            agent_brain.update_product_category(payload["product_id"], result["category"])
+            _agent_send(f"✅ Category updated to {result['category']} for product {payload['product_id']}")
 
         pending_actions.resolve(action["id"], "confirmed")
 
