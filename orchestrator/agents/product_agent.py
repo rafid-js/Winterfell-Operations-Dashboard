@@ -203,11 +203,14 @@ def run_agent(user_message: str, image_data: dict = None):
 
     messages = [_build_initial_message(user_message, image_data)]
 
-    for _ in range(10):  # safety cap on tool-call rounds
-        response = _client.messages.create(
-            model=AGENT_MODEL, max_tokens=4096,
-            tools=TOOLS, system=system, messages=messages,
-        )
+    for round_num in range(10):  # safety cap on tool-call rounds
+        kwargs = dict(model=AGENT_MODEL, max_tokens=4096, tools=TOOLS, system=system, messages=messages)
+        if round_num == 0 and image_data:
+            # Force a tool call on the photo-bearing first turn — otherwise the model
+            # sometimes just announces intent ("I'll analyze this now!") as plain text
+            # and ends its turn without ever calling analyze_product_image.
+            kwargs["tool_choice"] = {"type": "any"}
+        response = _client.messages.create(**kwargs)
 
         if response.stop_reason != "tool_use":
             # The model ended its turn with plain text instead of calling
