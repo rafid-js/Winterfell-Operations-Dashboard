@@ -24,9 +24,11 @@ Analyze this product photo and return ONLY valid JSON, no other text.
   "gender_target": "male/female/unisex",
   "style_mood": [],
   "suggested_category": "cargo-pants|drop-shoulder-tee|denim|knit-polo|jogger|jacket|other",
-  "size_range": "S-XL"
+  "size_range": "M-3XL"
 }
-If is_fashion_product is false, still return the JSON but leave other fields empty."""
+If is_fashion_product is false, still return the JSON but leave other fields empty.
+Winterfell's size range is always M to 3XL (M, L, XL, XXL, 3XL) — we do not sell S. Never
+suggest S, even if the garment looks small in the photo."""
 
 
 def _extract_json(text: str) -> dict:

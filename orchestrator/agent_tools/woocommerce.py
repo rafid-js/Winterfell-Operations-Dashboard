@@ -20,6 +20,23 @@ WP_USERNAME     = os.getenv('WP_USERNAME')
 WP_APP_PASSWORD = os.getenv('WP_APP_PASSWORD')
 
 _category_id_cache = {}
+_all_categories_cache = None
+
+
+def _normalize(s: str) -> str:
+    return ''.join(ch for ch in s.lower() if ch.isalnum())
+
+
+def _all_categories() -> list:
+    global _all_categories_cache
+    if _all_categories_cache is None:
+        r = requests.get(
+            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/categories",
+            auth=_oauth1(), params={"per_page": 100}, timeout=15,
+        )
+        r.raise_for_status()
+        _all_categories_cache = r.json()
+    return _all_categories_cache
 
 
 def _basic_auth_header() -> dict:
@@ -57,29 +74,35 @@ def upload_image(image_base64: str, filename: str = None, media_type: str = "ima
 
 
 def _resolve_category_id(category_slug: str):
-    """Look up a WooCommerce category id by slug via the REST API, creating it if missing."""
+    """Match a guessed category slug against existing WooCommerce categories, only
+    creating a new one if nothing close already exists."""
     if not category_slug:
         return None
     if category_slug in _category_id_cache:
         return _category_id_cache[category_slug]
 
-    r = requests.get(
+    target = _normalize(category_slug)
+    categories = _all_categories()
+
+    for cat in categories:
+        if _normalize(cat["slug"]) == target or _normalize(cat["name"]) == target:
+            _category_id_cache[category_slug] = cat["id"]
+            return cat["id"]
+
+    for cat in categories:
+        cat_norm = _normalize(cat["slug"])
+        if target in cat_norm or cat_norm in target:
+            _category_id_cache[category_slug] = cat["id"]
+            return cat["id"]
+
+    name = category_slug.replace('-', ' ').title()
+    r = requests.post(
         f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/categories",
-        auth=_oauth1(), params={"slug": category_slug}, timeout=15,
+        auth=_oauth1(), json={"name": name, "slug": category_slug}, timeout=15,
     )
     r.raise_for_status()
-    matches = r.json()
-    if matches:
-        category_id = matches[0]["id"]
-    else:
-        name = category_slug.replace('-', ' ').title()
-        r = requests.post(
-            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/categories",
-            auth=_oauth1(), json={"name": name, "slug": category_slug}, timeout=15,
-        )
-        r.raise_for_status()
-        category_id = r.json()["id"]
-
+    category_id = r.json()["id"]
+    categories.append(r.json())
     _category_id_cache[category_slug] = category_id
     return category_id
 
@@ -99,7 +122,7 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
         "attributes": [{
             "name": "Size",
             "visible": True,
-            "options": ["S", "M", "L", "XL"],
+            "options": ["M", "L", "XL", "XXL", "3XL"],
         }],
         "meta_data": [
             {"key": "_yoast_wpseo_title", "value": content.get("seo_title", "")},
