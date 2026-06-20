@@ -143,7 +143,7 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
     return {
         "product_id":  data["id"],
         "slug":        data.get("slug"),
-        "preview_url": f"{WOOCOMMERCE_URL}/?p={data['id']}&preview=true",
+        "preview_url": f"{WOOCOMMERCE_URL}/wp-admin/post.php?post={data['id']}&action=edit",
     }
 
 

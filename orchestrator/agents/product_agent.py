@@ -290,7 +290,7 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
             })
             _agent_send(
                 f"✅ Draft created\n{payload['content']['product_name']}\n"
-                f"Preview: {result['preview_url']}\n\n"
+                f"Edit/preview (login required): {result['preview_url']}\n\n"
                 f"Reply 'publish {result['product_id']}' or 'price {result['product_id']} 1100' to go live."
             )
 
