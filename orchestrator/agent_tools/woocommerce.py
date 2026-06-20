@@ -9,9 +9,9 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'brain', '.env'))
 
-WOOCOMMERCE_URL    = (os.getenv('WOOCOMMERCE_URL') or '').rstrip('/')
-WOOCOMMERCE_KEY    = os.getenv('WOOCOMMERCE_KEY')
-WOOCOMMERCE_SECRET = os.getenv('WOOCOMMERCE_SECRET')
+WOOCOMMERCE_URL    = (os.getenv('WC_URL') or os.getenv('WOOCOMMERCE_URL') or '').rstrip('/')
+WOOCOMMERCE_KEY    = os.getenv('WC_CONSUMER_KEY') or os.getenv('WOOCOMMERCE_KEY')
+WOOCOMMERCE_SECRET = os.getenv('WC_CONSUMER_SECRET') or os.getenv('WOOCOMMERCE_SECRET')
 
 # wp/v2/media is a WordPress-core endpoint, not WooCommerce — it doesn't accept
 # WooCommerce's consumer key/secret. It needs a WP Application Password instead
@@ -47,7 +47,7 @@ def _basic_auth_header() -> dict:
 def _oauth1():
     if not WOOCOMMERCE_KEY or not WOOCOMMERCE_SECRET:
         raise RuntimeError(
-            "WOOCOMMERCE_KEY / WOOCOMMERCE_SECRET not configured — set both env vars "
+            "WC_CONSUMER_KEY / WC_CONSUMER_SECRET not configured — set both env vars "
             "(WooCommerce → Settings → Advanced → REST API)."
         )
     return OAuth1(WOOCOMMERCE_KEY, WOOCOMMERCE_SECRET)
