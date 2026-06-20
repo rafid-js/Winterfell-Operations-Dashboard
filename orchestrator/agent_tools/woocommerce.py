@@ -155,6 +155,10 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
             "variation": True,
             "options": SIZES,
         }],
+        "default_attributes": [{
+            "name": "Size",
+            "option": "L",
+        }],
         "meta_data": [
             {"key": "_yoast_wpseo_title", "value": content.get("seo_title", "")},
             {"key": "_yoast_wpseo_metadesc", "value": content.get("seo_meta_description", "")},
