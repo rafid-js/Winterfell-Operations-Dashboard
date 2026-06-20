@@ -172,6 +172,13 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
     data = r.json()
     product_id = data["id"]
 
+    # SKU is the product's own WooCommerce id — only known once it's been created.
+    rr = requests.put(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}",
+        auth=_oauth1(), json={"sku": str(product_id)}, timeout=30,
+    )
+    rr.raise_for_status()
+
     create_size_variations(product_id, price, sale_price)
 
     return {
@@ -182,7 +189,9 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
 
 
 def create_size_variations(product_id: int, regular_price: str, sale_price: str = None):
-    """Create one variation per Size option, all sharing the same regular/sale price."""
+    """Create one variation per Size option, all sharing the same regular/sale price.
+    Each variation's SKU is "{product_id}-{variation_id}" — the variation_id is only
+    known once WooCommerce assigns it on creation, so the SKU is set in a follow-up call."""
     for size in SIZES:
         body = {
             "regular_price": str(regular_price or "0"),
@@ -195,6 +204,13 @@ def create_size_variations(product_id: int, regular_price: str, sale_price: str 
             auth=_oauth1(), json=body, timeout=30,
         )
         r.raise_for_status()
+        variation_id = r.json()["id"]
+
+        rr = requests.put(
+            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}/variations/{variation_id}",
+            auth=_oauth1(), json={"sku": f"{product_id}-{variation_id}"}, timeout=30,
+        )
+        rr.raise_for_status()
 
 
 def update_variation_prices(product_id: int, regular_price: str = None, sale_price: str = None):
