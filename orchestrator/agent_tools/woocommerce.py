@@ -194,7 +194,9 @@ def create_size_variations(product_id: int, regular_price: str, sale_price: str 
 
 
 def update_variation_prices(product_id: int, regular_price: str = None, sale_price: str = None):
-    """Update regular/sale price on every existing variation of a product."""
+    """Update regular/sale price on every existing variation of a product. Falls back to
+    setting the price directly on the product itself if it has no variations (e.g. a
+    simple product created before this product became variable)."""
     if regular_price is None and sale_price is None:
         return
     r = requests.get(
@@ -202,12 +204,22 @@ def update_variation_prices(product_id: int, regular_price: str = None, sale_pri
         auth=_oauth1(), params={"per_page": 100}, timeout=15,
     )
     r.raise_for_status()
+    variations = r.json()
     body = {}
     if regular_price is not None:
         body["regular_price"] = str(regular_price)
     if sale_price is not None:
         body["sale_price"] = str(sale_price)
-    for variation in r.json():
+
+    if not variations:
+        rr = requests.put(
+            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}",
+            auth=_oauth1(), json=body, timeout=30,
+        )
+        rr.raise_for_status()
+        return
+
+    for variation in variations:
         rr = requests.put(
             f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}/variations/{variation['id']}",
             auth=_oauth1(), json=body, timeout=30,
