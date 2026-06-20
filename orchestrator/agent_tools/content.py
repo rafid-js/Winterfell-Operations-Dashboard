@@ -66,3 +66,22 @@ def generate_product_content(product_data: dict, user_notes: str = "", memory_bl
     )
     text_out = "".join(block.text for block in response.content if block.type == "text")
     return _extract_json(text_out)
+
+
+_CORRECTION_SYSTEM_PROMPT = """You edit Winterfell WooCommerce product descriptions (HTML).
+You'll be given the current description and a correction instruction (e.g. "fix the size
+chart, M chest should be 42 inch"). Apply only that correction — keep everything else in the
+description exactly as-is, including the Banglish tone, formatting, and any unrelated content.
+Return ONLY the full corrected description, no other text, no JSON, no markdown fences."""
+
+
+def apply_correction(current_description: str, correction_text: str) -> str:
+    """Edit an existing product description per a single correction instruction."""
+    user_text = f"Current description:\n{current_description}\n\nCorrection: {correction_text}"
+    response = _client.messages.create(
+        model=CONTENT_MODEL,
+        max_tokens=2048,
+        system=_CORRECTION_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_text}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text").strip()

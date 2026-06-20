@@ -1,13 +1,15 @@
 """
 Product Agent — Winterfell's first agent.
 
-Pipeline: photo in → Claude Vision analysis → generated content → (approve) →
-WooCommerce draft + Brain save → Telegram review message → (approve) → publish/delete.
+Pipeline: photo in → Claude Vision analysis → generated content → Telegram review
+message → one "yes" → product is created AND published live in the same step, saved
+to Brain automatically. Corrections after the fact (price/category/anything else) are
+each a single staged action with their own single "yes".
 
-Gated actions (create_woocommerce_draft, publish_product, delete_product) are never
-executed directly by the tool loop. They're staged as a pending_action and only run
-once Rafid replies "yes" on Telegram or clicks Approve on the Agents dashboard page —
-see confirm_pending_action() below.
+Gated actions (create_and_publish_product, publish_product, delete_product,
+update_category, update_description) are never executed directly by the tool loop.
+They're staged as a pending_action and only run once Rafid replies "yes" on Telegram
+or clicks Approve on the Agents dashboard page — see confirm_pending_action() below.
 """
 import os
 import json
@@ -42,24 +44,28 @@ When you receive a product photo:
 2. Check if it looks like a fashion/clothing product — if not, tell Rafid and stop
 3. Generate all product content
 4. Upload the image to WooCommerce
-5. Stage the draft product for Rafid's approval (create_woocommerce_draft) — show him
-   the generated content as a preview in your Telegram message and ask him to reply "yes"
-6. Once approved and the draft is created, it gets saved to Brain automatically
-7. Tell Rafid he can reply "publish [id]", "price [id] [amount]", or "delete [id]"
+5. Stage the product for Rafid's approval (create_and_publish_product) — show him the
+   generated content as a preview in your Telegram message and ask him to reply "yes".
+   One "yes" creates AND publishes it live — there is no separate publish step.
+6. Once approved, it's live on WooCommerce and saved to Brain automatically
+7. Tell Rafid he can reply "price [id] [amount]", "delete [id]", "category [id] [slug]",
+   or just describe a correction (e.g. "correct the size m chest 42") to fix the product
+   he just approved
 
 When you receive a command:
-- "publish [id]" → stage publish_product, ask Rafid to confirm with "yes"
 - "price [id] [amount]" → stage publish_product with that price, ask Rafid to confirm
 - "delete [id]" → stage delete_product, ask Rafid to confirm
 - "category [id] [slug]" → stage update_product_category, ask Rafid to confirm
-- A correction with no product id (e.g. "category should be drop shoulder polo") and no
-  image attached → you have no way to know which product it's about. Ask Rafid to resend
-  it as "category [id] [slug]" using the id from the draft/confirmation message.
+- A correction with NO product id and NO image attached (e.g. "correct the size m chest
+  42", "category should be drop shoulder polo") → call apply_correction_to_last_product
+  with correction_text set to exactly what Rafid said. This edits the most recently
+  created product's description and stages it for approval. Do NOT call
+  analyze_product_image for these — there is no image in this message.
 - Anything else → tell Rafid you did not understand, list what you can do
 
-create_woocommerce_draft, publish_product, delete_product, and update_product_category are
-gated — calling them only stages the action and asks Rafid to confirm. They do not execute
-until he replies "yes".
+create_and_publish_product, publish_product, delete_product, update_product_category, and
+apply_correction_to_last_product are gated — calling them only stages the action and asks
+Rafid to confirm. They do not execute until he replies "yes".
 
 Always send a Telegram message at the end so Rafid knows what happened.
 If anything fails, tell Rafid exactly what went wrong in plain language."""
@@ -98,8 +104,8 @@ TOOLS = [
         },
     },
     {
-        "name": "create_woocommerce_draft",
-        "description": "Stage a draft product in WooCommerce with all content for Rafid's approval. Does not go live until confirmed.",
+        "name": "create_and_publish_product",
+        "description": "Stage creating AND publishing this product live on WooCommerce in one step, for Rafid's approval. Does not go live until confirmed.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -158,10 +164,21 @@ TOOLS = [
             "required": ["product_id", "category_slug"],
         },
     },
+    {
+        "name": "apply_correction_to_last_product",
+        "description": "Edit the most recently created product's description per a single correction instruction (e.g. 'correct the size m chest 42'), and stage the updated description for Rafid's approval. Use this for any text-only correction that has no product id and no image attached.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "correction_text": {"type": "string", "description": "Exactly what Rafid said, e.g. 'correct the size m chest 42'"},
+            },
+            "required": ["correction_text"],
+        },
+    },
 ]
 
 _GATE_ALIASES = {
-    "create_woocommerce_draft": "create_woocommerce_draft",
+    "create_and_publish_product": "create_and_publish_product",
     "publish_woocommerce_product": "publish_product",
     "delete_woocommerce_product": "delete_product",
     "update_product_category": "update_category",
@@ -215,6 +232,23 @@ def _execute_tool(name: str, tool_input: dict, image_data: dict = None) -> dict:
     if name == "send_telegram_message":
         _agent_send(tool_input["message"])
         return {"sent": True}
+
+    if name == "apply_correction_to_last_product":
+        recent = agent_brain.recent_products(limit=1)
+        if not recent:
+            return {"error": "No products found to correct."}
+        woo_id = recent[0]["woo_id"]
+        current = woocommerce.get_product(woo_id)
+        updated_description = content_tool.apply_correction(
+            current.get("description", ""), tool_input["correction_text"]
+        )
+        action_id = pending_actions.create(AGENT_NAME, "update_description", {
+            "product_id": woo_id,
+            "description": updated_description,
+            "correction_text": tool_input["correction_text"],
+        })
+        return {"staged": True, "action_id": action_id, "product_id": woo_id,
+                "message": "Staged — will only run once Rafid replies 'yes'."}
 
     return {"error": f"Unknown tool: {name}"}
 
@@ -285,7 +319,7 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
         payload = json.loads(payload)
 
     try:
-        if action_type == "create_woocommerce_draft":
+        if action_type == "create_and_publish_product":
             result = woocommerce.create_product(
                 payload["content"], payload["media_id"],
                 payload.get("category_slug", "other"), payload.get("price", "0"),
@@ -297,10 +331,11 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
                 "category": payload.get("category_slug"),
                 "price":    int(payload.get("price") or 0),
             })
+            agent_brain.update_product_status(result["product_id"], "publish", int(payload.get("price") or 0))
             _agent_send(
-                f"✅ Draft created\n{payload['content']['product_name']}\n"
-                f"Edit/preview (login required): {result['preview_url']}\n\n"
-                f"Reply 'publish {result['product_id']}' or 'price {result['product_id']} 1100' to go live."
+                f"✅ Live: {payload['content']['product_name']}\n{result['permalink']}\n\n"
+                f"Reply 'price {result['product_id']} 1100', 'category {result['product_id']} [slug]', "
+                f"'delete {result['product_id']}', or just describe a correction (e.g. 'correct the size m chest 42')."
             )
 
         elif action_type == "publish_product":
@@ -320,6 +355,15 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
             result = woocommerce.update_product_category(payload["product_id"], payload["category_slug"])
             agent_brain.update_product_category(payload["product_id"], result["category"])
             _agent_send(f"✅ Category updated to {result['category']} for product {payload['product_id']}")
+
+        elif action_type == "update_description":
+            result = woocommerce.update_product_description(payload["product_id"], payload["description"])
+            _agent_send(f"✅ Updated and republished: {result['permalink']}")
+            agent_memory.save_memory(
+                AGENT_NAME, memory_type="content",
+                context=f"correction on product {payload['product_id']}",
+                learning=payload.get("correction_text", ""), confidence=0.6,
+            )
 
         pending_actions.resolve(action["id"], "confirmed")
 

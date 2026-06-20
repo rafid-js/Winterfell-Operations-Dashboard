@@ -134,11 +134,11 @@ DEFAULT_WEIGHT_KG = "0.25"
 
 def create_product(content: dict, media_id: int, category_slug: str, price: str = "0",
                     weight: str = None) -> dict:
-    """Create a draft WooCommerce product. Returns {product_id, slug, preview_url}."""
+    """Create and immediately publish a WooCommerce product. Returns {product_id, slug, permalink}."""
     category_id = _resolve_category_id(category_slug)
     body = {
         "name":              content["product_name"],
-        "status":            "draft",
+        "status":            "publish",
         "description":       content["long_description"],
         "short_description": content["short_description"],
         "regular_price":     str(price or "0"),
@@ -163,10 +163,30 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
     r.raise_for_status()
     data = r.json()
     return {
-        "product_id":  data["id"],
-        "slug":        data.get("slug"),
-        "preview_url": f"{WOOCOMMERCE_URL}/wp-admin/post.php?post={data['id']}&action=edit",
+        "product_id": data["id"],
+        "slug":       data.get("slug"),
+        "permalink":  data.get("permalink"),
     }
+
+
+def get_product(product_id: int) -> dict:
+    """Fetch a product's current data, e.g. to read its live description before editing it."""
+    r = requests.get(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}",
+        auth=_oauth1(), timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def update_product_description(product_id: int, description: str) -> dict:
+    """Overwrite a product's description (e.g. after a correction)."""
+    r = requests.put(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}",
+        auth=_oauth1(), json={"description": description}, timeout=30,
+    )
+    r.raise_for_status()
+    return {"permalink": r.json().get("permalink")}
 
 
 def update_product_category(product_id: int, category_slug: str) -> dict:
