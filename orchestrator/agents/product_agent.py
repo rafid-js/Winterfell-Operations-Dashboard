@@ -52,8 +52,14 @@ When you receive a product photo:
    or just describe a correction (e.g. "correct the size m chest 42") to fix the product
    he just approved
 
+Price: Rafid may give one number (the selling price) or two ("regular price 990 selling
+price 790" / "990/790"). Pass both regular_price and sale_price to create_and_publish_product
+whenever he gives two — never collapse them into one. If he gives only one number, that's
+regular_price with no sale_price.
+
 When you receive a command:
-- "price [id] [amount]" → stage publish_product with that price, ask Rafid to confirm
+- "price [id] [amount]" or "price [id] [regular] [sale]" → stage publish_product with that
+  regular_price (and sale_price if given), ask Rafid to confirm
 - "delete [id]" → stage delete_product, ask Rafid to confirm
 - "category [id] [slug]" → stage update_product_category, ask Rafid to confirm
 - A correction with NO product id and NO image attached (e.g. "correct the size m chest
@@ -112,7 +118,8 @@ TOOLS = [
                 "content": {"type": "object", "description": "Output from generate_product_content"},
                 "media_id": {"type": "integer", "description": "From upload_image_to_woocommerce"},
                 "category_slug": {"type": "string", "description": "e.g. cargo-pants"},
-                "price": {"type": "string", "description": "Optional price in BDT, default 0"},
+                "regular_price": {"type": "string", "description": "Regular (compare-at) price in BDT, default 0"},
+                "sale_price": {"type": "string", "description": "Optional discounted selling price in BDT, lower than regular_price"},
                 "weight": {"type": "string", "description": "Optional shipping weight in kg, default 0.25"},
             },
             "required": ["content", "media_id", "category_slug"],
@@ -131,12 +138,13 @@ TOOLS = [
     },
     {
         "name": "publish_woocommerce_product",
-        "description": "Stage publishing a draft WooCommerce product for Rafid's approval. Optionally set price first.",
+        "description": "Stage a price update (and ensure published) on an existing WooCommerce product, for Rafid's approval.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "product_id": {"type": "integer"},
-                "price": {"type": "string", "description": "Optional — set price before publishing"},
+                "price": {"type": "string", "description": "Optional — new regular (compare-at) price"},
+                "sale_price": {"type": "string", "description": "Optional — new discounted selling price, lower than price"},
             },
             "required": ["product_id"],
         },
@@ -322,24 +330,29 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
         if action_type == "create_and_publish_product":
             result = woocommerce.create_product(
                 payload["content"], payload["media_id"],
-                payload.get("category_slug", "other"), payload.get("price", "0"),
-                payload.get("weight"),
+                payload.get("category_slug", "other"), payload.get("regular_price", "0"),
+                payload.get("weight"), payload.get("sale_price"),
             )
             agent_brain.save_product({
                 "woo_id":   result["product_id"],
                 "name":     payload["content"]["product_name"],
                 "category": payload.get("category_slug"),
-                "price":    int(payload.get("price") or 0),
+                "price":    int(payload.get("regular_price") or 0),
             })
-            agent_brain.update_product_status(result["product_id"], "publish", int(payload.get("price") or 0))
+            agent_brain.update_product_status(result["product_id"], "publish", int(payload.get("regular_price") or 0))
+            price_line = f"Regular price: {payload.get('regular_price', '0')}"
+            if payload.get("sale_price"):
+                price_line += f" | Sale price: {payload['sale_price']}"
             _agent_send(
-                f"✅ Live: {payload['content']['product_name']}\n{result['permalink']}\n\n"
+                f"✅ Live: {payload['content']['product_name']}\n{price_line}\n{result['permalink']}\n\n"
                 f"Reply 'price {result['product_id']} 1100', 'category {result['product_id']} [slug]', "
                 f"'delete {result['product_id']}', or just describe a correction (e.g. 'correct the size m chest 42')."
             )
 
         elif action_type == "publish_product":
-            result = woocommerce.publish_product(payload["product_id"], payload.get("price"))
+            result = woocommerce.publish_product(
+                payload["product_id"], payload.get("price"), payload.get("sale_price"),
+            )
             agent_brain.update_product_status(
                 payload["product_id"], "publish",
                 int(payload["price"]) if payload.get("price") else None,

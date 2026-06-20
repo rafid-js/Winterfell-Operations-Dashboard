@@ -130,18 +130,21 @@ def _resolve_category_id(category_slug: str):
 
 
 DEFAULT_WEIGHT_KG = "0.25"
+SIZES = ["M", "L", "XL", "XXL", "3XL"]
 
 
 def create_product(content: dict, media_id: int, category_slug: str, price: str = "0",
-                    weight: str = None) -> dict:
-    """Create and immediately publish a WooCommerce product. Returns {product_id, slug, permalink}."""
+                    weight: str = None, sale_price: str = None) -> dict:
+    """Create and immediately publish a variable WooCommerce product with a selectable
+    Size attribute, then create one price-bearing variation per size. Returns
+    {product_id, slug, permalink}."""
     category_id = _resolve_category_id(category_slug)
     body = {
         "name":              content["product_name"],
+        "type":              "variable",
         "status":            "publish",
         "description":       content["long_description"],
         "short_description": content["short_description"],
-        "regular_price":     str(price or "0"),
         "weight":            str(weight or DEFAULT_WEIGHT_KG),
         "categories":        [{"id": int(category_id)}] if category_id else [],
         "tags":              [{"name": tag} for tag in content.get("woo_tags", [])],
@@ -149,7 +152,8 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
         "attributes": [{
             "name": "Size",
             "visible": True,
-            "options": ["M", "L", "XL", "XXL", "3XL"],
+            "variation": True,
+            "options": SIZES,
         }],
         "meta_data": [
             {"key": "_yoast_wpseo_title", "value": content.get("seo_title", "")},
@@ -162,11 +166,53 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
     )
     r.raise_for_status()
     data = r.json()
+    product_id = data["id"]
+
+    create_size_variations(product_id, price, sale_price)
+
     return {
-        "product_id": data["id"],
+        "product_id": product_id,
         "slug":       data.get("slug"),
         "permalink":  data.get("permalink"),
     }
+
+
+def create_size_variations(product_id: int, regular_price: str, sale_price: str = None):
+    """Create one variation per Size option, all sharing the same regular/sale price."""
+    for size in SIZES:
+        body = {
+            "regular_price": str(regular_price or "0"),
+            "attributes": [{"name": "Size", "option": size}],
+        }
+        if sale_price:
+            body["sale_price"] = str(sale_price)
+        r = requests.post(
+            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}/variations",
+            auth=_oauth1(), json=body, timeout=30,
+        )
+        r.raise_for_status()
+
+
+def update_variation_prices(product_id: int, regular_price: str = None, sale_price: str = None):
+    """Update regular/sale price on every existing variation of a product."""
+    if regular_price is None and sale_price is None:
+        return
+    r = requests.get(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}/variations",
+        auth=_oauth1(), params={"per_page": 100}, timeout=15,
+    )
+    r.raise_for_status()
+    body = {}
+    if regular_price is not None:
+        body["regular_price"] = str(regular_price)
+    if sale_price is not None:
+        body["sale_price"] = str(sale_price)
+    for variation in r.json():
+        rr = requests.put(
+            f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}/variations/{variation['id']}",
+            auth=_oauth1(), json=body, timeout=30,
+        )
+        rr.raise_for_status()
 
 
 def get_product(product_id: int) -> dict:
@@ -201,17 +247,14 @@ def update_product_category(product_id: int, category_slug: str) -> dict:
     return {"category": category_slug}
 
 
-def publish_product(product_id: int, price: str = None) -> dict:
-    """Publish a draft product, optionally setting price first. Returns {permalink}."""
-    body = {"status": "publish"}
-    if price is not None:
-        body["regular_price"] = str(price)
-
+def publish_product(product_id: int, price: str = None, sale_price: str = None) -> dict:
+    """Ensure a product is published, optionally updating its variation prices. Returns {permalink}."""
     r = requests.put(
         f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products/{product_id}",
-        auth=_oauth1(), json=body, timeout=30,
+        auth=_oauth1(), json={"status": "publish"}, timeout=30,
     )
     r.raise_for_status()
+    update_variation_prices(product_id, price, sale_price)
     return {"permalink": r.json().get("permalink")}
 
 
