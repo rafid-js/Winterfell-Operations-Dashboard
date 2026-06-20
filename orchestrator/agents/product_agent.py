@@ -193,8 +193,15 @@ def _execute_tool(name: str, tool_input: dict, image_data: dict = None) -> dict:
 
     if name == "generate_product_content":
         memory_block = agent_memory.memories_as_prompt_block(AGENT_NAME, memory_type="content")
+        try:
+            size_chart_reference = woocommerce.get_category_reference_description(
+                tool_input["product_data"].get("suggested_category")
+            )
+        except Exception:
+            size_chart_reference = None
         return content_tool.generate_product_content(
-            tool_input["product_data"], tool_input.get("user_notes", ""), memory_block
+            tool_input["product_data"], tool_input.get("user_notes", ""), memory_block,
+            size_chart_reference,
         )
 
     if name == "upload_image_to_woocommerce":

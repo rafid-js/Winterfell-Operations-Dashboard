@@ -78,6 +78,23 @@ def upload_image(image_base64: str, filename: str = None, media_type: str = "ima
     return {"media_id": data["id"], "source_url": data.get("source_url")}
 
 
+def get_category_reference_description(category_slug: str):
+    """Return the description of the most recently published product in this category,
+    for reuse as a size-chart reference. None if the category is empty/unmatched."""
+    category_id = _resolve_category_id(category_slug)
+    if not category_id:
+        return None
+    r = requests.get(
+        f"{WOOCOMMERCE_URL}/wp-json/wc/v3/products",
+        auth=_oauth1(),
+        params={"category": category_id, "status": "publish", "per_page": 1, "orderby": "date", "order": "desc"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    items = r.json()
+    return items[0].get("description") if items else None
+
+
 def _resolve_category_id(category_slug: str):
     """Match a guessed category slug against existing WooCommerce categories, only
     creating a new one if nothing close already exists."""

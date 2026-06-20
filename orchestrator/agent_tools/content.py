@@ -24,7 +24,14 @@ Return ONLY valid JSON:
   "size_guide_note": "",
   "woo_tags": [],
   "whatsapp_promo_line": ""
-}"""
+}
+
+seo_title must be 60 characters or fewer (including " | Winterfell") — Yoast flags anything
+longer. Trim the product name down, don't just truncate mid-word.
+
+long_description must end with a clear size chart section (reuse size_guide_note's content
+there too) so customers actually see it on the product page — never leave sizing out of the
+description body."""
 
 
 def _extract_json(text: str) -> dict:
@@ -34,7 +41,8 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def generate_product_content(product_data: dict, user_notes: str = "", memory_block: str = "") -> dict:
+def generate_product_content(product_data: dict, user_notes: str = "", memory_block: str = "",
+                              size_chart_reference: str = None) -> dict:
     system = _SYSTEM_PROMPT
     if memory_block:
         system += f"\n\n{memory_block}"
@@ -42,6 +50,13 @@ def generate_product_content(product_data: dict, user_notes: str = "", memory_bl
     user_text = f"Product analysis:\n{json.dumps(product_data)}"
     if user_notes:
         user_text += f"\n\nUser notes / overrides: {user_notes}"
+    if size_chart_reference:
+        user_text += (
+            "\n\nAn existing published product in the same category has this description "
+            "(for size chart reference only — match its size chart's format and measurements "
+            "unless they're clearly wrong for this garment; write fresh marketing copy, don't "
+            f"copy the rest of it):\n{size_chart_reference}"
+        )
 
     response = _client.messages.create(
         model=CONTENT_MODEL,
