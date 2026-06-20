@@ -129,7 +129,11 @@ def _resolve_category_id(category_slug: str):
     return category_id
 
 
-def create_product(content: dict, media_id: int, category_slug: str, price: str = "0") -> dict:
+DEFAULT_WEIGHT_KG = "0.25"
+
+
+def create_product(content: dict, media_id: int, category_slug: str, price: str = "0",
+                    weight: str = None) -> dict:
     """Create a draft WooCommerce product. Returns {product_id, slug, preview_url}."""
     category_id = _resolve_category_id(category_slug)
     body = {
@@ -138,6 +142,7 @@ def create_product(content: dict, media_id: int, category_slug: str, price: str 
         "description":       content["long_description"],
         "short_description": content["short_description"],
         "regular_price":     str(price or "0"),
+        "weight":            str(weight or DEFAULT_WEIGHT_KG),
         "categories":        [{"id": int(category_id)}] if category_id else [],
         "tags":              [{"name": tag} for tag in content.get("woo_tags", [])],
         "images":            [{"id": media_id}],

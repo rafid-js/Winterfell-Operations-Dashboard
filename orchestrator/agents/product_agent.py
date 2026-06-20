@@ -107,6 +107,7 @@ TOOLS = [
                 "media_id": {"type": "integer", "description": "From upload_image_to_woocommerce"},
                 "category_slug": {"type": "string", "description": "e.g. cargo-pants"},
                 "price": {"type": "string", "description": "Optional price in BDT, default 0"},
+                "weight": {"type": "string", "description": "Optional shipping weight in kg, default 0.25"},
             },
             "required": ["content", "media_id", "category_slug"],
         },
@@ -288,6 +289,7 @@ def confirm_pending_action(action_id: int = None, correction_text: str = ""):
             result = woocommerce.create_product(
                 payload["content"], payload["media_id"],
                 payload.get("category_slug", "other"), payload.get("price", "0"),
+                payload.get("weight"),
             )
             agent_brain.save_product({
                 "woo_id":   result["product_id"],
