@@ -47,6 +47,10 @@ app.register_blueprint(inv_bp)
 from agents_routes import agents_bp
 app.register_blueprint(agents_bp)
 
+# ── Customer Support agent blueprint (webhooks) ──────────────────────────────
+from cs_agent import cs_bp
+app.register_blueprint(cs_bp)
+
 DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD', 'winterfell')
 
 # Maps script_name → cron module path
@@ -58,6 +62,7 @@ CRON_SCRIPTS = {
     'meta_sync':      'orchestrator.cron_meta',
     'reorder_engine': 'orchestrator.cron_reorder',
     'daily_briefing': 'orchestrator.cron_briefing',
+    'cs_index':       'orchestrator.cron_cs_index',
 }
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
