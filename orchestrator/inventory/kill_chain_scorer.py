@@ -9,8 +9,14 @@ one-line ops exit instruction when ANTHROPIC_API_KEY is set.
 import json
 import math
 import os
+from datetime import datetime, timedelta
 
 from sqlalchemy import text
+
+# Re-run the Claude exit-strategy call only when something material changed —
+# otherwise every reorder cycle would re-spend tokens on an unchanged SKU.
+REC_STALE_AFTER = timedelta(days=7)
+REC_SCORE_DELTA = 1.0
 
 
 # ── scoring ───────────────────────────────────────────────────────────────────
@@ -84,16 +90,22 @@ def log_dead_stock(conn, row):
     """UPSERT a dead_stock_log entry for a suppressed product (one row per sku_base
     while Active). Adds a Claude exit recommendation when available."""
     stage = row.get('kill_chain_stage')
+    score = row.get('kill_chain_score')
     discount = _suggested_discount(row)
     action = _suggested_action(stage)
     bundle_with = _bundle_pairing(conn, row.get('category'))
-    rec = _claude_recommendation(row, stage, discount) if os.environ.get('ANTHROPIC_API_KEY') else None
+
+    existing = conn.execute(text("""
+        SELECT id, kill_chain_stage, kill_chain_score, claude_recommendation, rec_generated_at
+        FROM dead_stock_log WHERE sku_base = :b AND status <> 'Cleared' LIMIT 1
+    """), {'b': row['sku_base']}).fetchone()
+
+    rec = None
+    if os.environ.get('ANTHROPIC_API_KEY') and _needs_recommendation(existing, stage, score):
+        rec = _claude_recommendation(row, stage, discount)
     brand_risk = (rec or {}).get('brand_risk') if isinstance(rec, dict) else None
     rec_text = json.dumps(rec) if isinstance(rec, dict) else rec
-
-    existing = conn.execute(text(
-        "SELECT id FROM dead_stock_log WHERE sku_base = :b AND status <> 'Cleared' LIMIT 1"
-    ), {'b': row['sku_base']}).fetchone()
+    rec_generated_at = datetime.utcnow() if rec is not None else None
 
     params = {
         'b': row['sku_base'],
@@ -101,7 +113,7 @@ def log_dead_stock(conn, row):
         'units': int(row.get('stock_total') or 0),
         'cap': row.get('capital_at_risk_bdt'),
         'stage': stage,
-        'score': row.get('kill_chain_score'),
+        'score': score,
         'dnls': row.get('days_since_last_sale'),
         'stp': row.get('sell_through_pct'),
         'action': action,
@@ -110,6 +122,7 @@ def log_dead_stock(conn, row):
         'rec': rec_text,
         'risk': brand_risk,
         'strike': row.get('strike_count', 0),
+        'rec_at': rec_generated_at,
     }
     if existing:
         conn.execute(text("""
@@ -118,7 +131,8 @@ def log_dead_stock(conn, row):
               kill_chain_score=:score, days_since_last_sale=:dnls, sell_through_pct=:stp,
               suggested_action=:action, suggested_discount_pct=:disc, bundle_with_sku=:bundle,
               claude_recommendation=COALESCE(:rec, claude_recommendation),
-              brand_risk_rating=COALESCE(:risk, brand_risk_rating), strike_count=:strike
+              brand_risk_rating=COALESCE(:risk, brand_risk_rating), strike_count=:strike,
+              rec_generated_at=COALESCE(:rec_at, rec_generated_at)
             WHERE id=:id
         """), {**params, 'id': existing._mapping['id']})
     else:
@@ -127,12 +141,32 @@ def log_dead_stock(conn, row):
               sku_base, product_name, units_stuck, capital_locked_bdt, kill_chain_stage,
               kill_chain_score, days_since_last_sale, sell_through_pct, suggested_action,
               suggested_discount_pct, bundle_with_sku, claude_recommendation,
-              brand_risk_rating, status, strike_count
+              brand_risk_rating, status, strike_count, rec_generated_at
             ) VALUES (
               :b, :pn, :units, :cap, :stage, :score, :dnls, :stp, :action,
-              :disc, :bundle, :rec, :risk, 'Active', :strike
+              :disc, :bundle, :rec, :risk, 'Active', :strike, :rec_at
             )
         """), params)
+
+
+def _needs_recommendation(existing, stage, score):
+    """Decide whether to spend a Claude call on a fresh exit recommendation.
+    Regenerate when there's no prior rec, the stage changed, the score moved
+    materially, or the existing rec has gone stale."""
+    if not existing:
+        return True
+    m = existing._mapping
+    if not m['claude_recommendation']:
+        return True
+    if m['kill_chain_stage'] != stage:
+        return True
+    old_score = float(m['kill_chain_score'] or 0)
+    if abs(old_score - float(score or 0)) >= REC_SCORE_DELTA:
+        return True
+    generated_at = m['rec_generated_at']
+    if generated_at is None or datetime.utcnow() - generated_at >= REC_STALE_AFTER:
+        return True
+    return False
 
 
 def _bundle_pairing(conn, category):

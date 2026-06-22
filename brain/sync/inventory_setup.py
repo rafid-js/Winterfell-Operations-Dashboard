@@ -71,9 +71,16 @@ CREATE TABLE IF NOT EXISTS dead_stock_log (
     status                  VARCHAR(20) DEFAULT 'Active',
     strike_count            INTEGER DEFAULT 0,
     logged_at               TIMESTAMP DEFAULT NOW(),
-    resolved_at             TIMESTAMP
+    resolved_at             TIMESTAMP,
+    rec_generated_at        TIMESTAMP
 );
 """
+
+# Tracks when claude_recommendation was last (re)generated, so log_dead_stock
+# can skip the Claude call when the existing rec is still fresh.
+DEAD_STOCK_LOG_COLUMNS_SQL = [
+    "ALTER TABLE dead_stock_log ADD COLUMN IF NOT EXISTS rec_generated_at TIMESTAMP;",
+]
 
 TRUE_DEMAND_LOG_SQL = """
 CREATE TABLE IF NOT EXISTS true_demand_log (
@@ -193,6 +200,10 @@ def run():
         conn.execute(text(TRUE_DEMAND_LOG_SQL))
         print("Creating size_profiles ...")
         conn.execute(text(SIZE_PROFILES_SQL))
+
+        print("Adding dead_stock_log columns ...")
+        for stmt in DEAD_STOCK_LOG_COLUMNS_SQL:
+            conn.execute(text(stmt))
 
         print("Creating indexes ...")
         for stmt in INDEXES_SQL:
