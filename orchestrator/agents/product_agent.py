@@ -182,6 +182,9 @@ TOOLS = [
             },
             "required": ["correction_text"],
         },
+        # This is the last tool in the list — cache_control here caches the entire
+        # (otherwise-identical, every call) tools array up to this point.
+        "cache_control": {"type": "ephemeral"},
     },
 ]
 
@@ -274,10 +277,15 @@ def _build_initial_message(user_message: str, image_data: dict = None) -> dict:
 
 def run_agent(user_message: str, image_data: dict = None):
     """Drive the Claude tool-use loop until it stops calling tools."""
+    # SYSTEM_PROMPT never changes between calls — cache it. memory_block does change
+    # (it's queried fresh each run), so it stays outside the cached block.
     memory_block = agent_memory.memories_as_prompt_block(AGENT_NAME)
-    system = SYSTEM_PROMPT if not memory_block else f"{SYSTEM_PROMPT}\n\n{memory_block}"
+    system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
+    if memory_block:
+        system.append({"type": "text", "text": memory_block})
 
     messages = [_build_initial_message(user_message, image_data)]
+    image_in_history = bool(image_data)
 
     for round_num in range(10):  # safety cap on tool-call rounds
         kwargs = dict(model=AGENT_MODEL, max_tokens=4096, tools=TOOLS, system=system, messages=messages)
@@ -298,6 +306,7 @@ def run_agent(user_message: str, image_data: dict = None):
             break
 
         tool_results = []
+        analyzed_image_this_round = False
         for block in response.content:
             if block.type == "tool_use":
                 try:
@@ -307,9 +316,25 @@ def run_agent(user_message: str, image_data: dict = None):
                 tool_results.append({
                     "type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result),
                 })
+                if block.name == "analyze_product_image":
+                    analyzed_image_this_round = True
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
+
+        if analyzed_image_this_round and image_in_history:
+            # Vision has already extracted everything it needs from the photo —
+            # nothing downstream looks at raw pixels again (upload_image_to_woocommerce
+            # uses the image_data closure variable directly, not this conversation).
+            # Drop the image from history so it isn't re-billed on every later round.
+            messages[0]["content"] = [
+                c for c in messages[0]["content"] if c.get("type") != "image"
+            ]
+            messages[0]["content"].insert(0, {
+                "type": "text",
+                "text": "[Product photo was attached here — already analyzed, see analyze_product_image's result below.]",
+            })
+            image_in_history = False
     else:
         _agent_send("⚠️ Hit the round limit while processing — something may have gotten stuck. Check the /agents dashboard.")
 
