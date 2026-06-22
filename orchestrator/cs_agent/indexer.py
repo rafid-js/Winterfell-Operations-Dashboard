@@ -46,7 +46,7 @@ def _build_products(conn):
             p['colors'].add(m['color'])
         if m['image_url'] and not p['image_url']:
             p['image_url'] = m['image_url']
-        if m['woo_product_id'] and not p['woo_product_id']:
+        if m['wc_product_id'] and not p['woo_product_id']:
             p['woo_product_id'] = m['wc_product_id']
         size = _normalize_size(m['size'])
         p['stock'][size] = p['stock'].get(size, 0) + int(m['current_stock'] or 0)
