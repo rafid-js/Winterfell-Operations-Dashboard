@@ -63,6 +63,7 @@ CRON_SCRIPTS = {
     'reorder_engine': 'orchestrator.cron_reorder',
     'daily_briefing': 'orchestrator.cron_briefing',
     'cs_index':       'orchestrator.cron_cs_index',
+    'cs_learner':     'orchestrator.cron_cs_learner',
 }
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

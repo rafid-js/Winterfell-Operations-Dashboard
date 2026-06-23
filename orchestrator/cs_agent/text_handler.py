@@ -46,7 +46,21 @@ def _order_context(conn, channel, customer_id):
     return '\n'.join(lines)
 
 
-def _system_prompt(order_context):
+def _learned_notes(conn):
+    """Top curated notes from nightly_learner — recurring pitfalls/clarifications
+    distilled from past conversations. Capped small so the prompt stays cheap."""
+    rows = conn.execute(text("""
+        SELECT memory_text FROM cs_agent_memory
+        ORDER BY importance DESC, last_reinforced DESC LIMIT 8
+    """)).fetchall()
+    if not rows:
+        return ''
+    lines = ["Things you've learned from past conversations:"]
+    lines += [f"- {r._mapping['memory_text']}" for r in rows]
+    return '\n'.join(lines)
+
+
+def _system_prompt(order_context, learned_notes):
     return (
         "You are Winterfell's customer support agent. Winterfell is a Gen Z "
         "fast-fashion brand in Bangladesh (sizes M–3XL only).\n"
@@ -60,6 +74,7 @@ def _system_prompt(order_context):
         "You CANNOT handle refunds, returns, exchanges, payment disputes, or "
         f"complaints — for those reply EXACTLY: \"এটা আমাদের {_HANDOFF_SENTINEL}, একটু wait করুন 🙏\".\n"
         "Never invent stock numbers. If you don't know, say you'll check."
+        + (f"\n\n{learned_notes}" if learned_notes else "")
     )
 
 
@@ -107,7 +122,8 @@ def handle_text(conn, session, message):
         return
 
     order_context = _order_context(conn, session['channel'], session['customer_id'])
-    system_prompt = _system_prompt(order_context)
+    learned_notes = _learned_notes(conn)
+    system_prompt = _system_prompt(order_context, learned_notes)
 
     history = [{'role': m['role'], 'content': m['content']}
                for m in session.get('messages', [])[-6:]]
