@@ -27,13 +27,15 @@ from db import get_connection  # noqa: E402
 
 EXTENSION_SQL = "CREATE EXTENSION IF NOT EXISTS vector;"
 
-# One row per base product (grouped from skus by product_name). stock_json holds
-# the per-size live stock, e.g. {"M": 12, "L": 8, "XL": 0}. price is in whole BDT
-# (skus.selling_price is already taka, not paisa).
+# One row per base product, keyed on the SKU parent (split_part(sku,'-',1)).
+# A base product = all size variants of one colourway; colours stay separate
+# (they look different in a photo). product_name is the clean display name with
+# the size suffix stripped. stock_json holds per-size live stock, e.g.
+# {"M": 12, "L": 8, "30": 4}. price is whole BDT (skus.selling_price is taka).
 PRODUCT_EMBEDDINGS_SQL = """
 CREATE TABLE IF NOT EXISTS product_embeddings (
-    product_name           VARCHAR(300) PRIMARY KEY,
-    representative_sku     VARCHAR(200),
+    representative_sku     VARCHAR(200) PRIMARY KEY,
+    product_name           VARCHAR(300) NOT NULL,
     woo_product_id         INTEGER,
     category               VARCHAR(100),
     image_url              TEXT,
@@ -44,6 +46,39 @@ CREATE TABLE IF NOT EXISTS product_embeddings (
     is_active              BOOLEAN DEFAULT TRUE,
     updated_at             TIMESTAMP DEFAULT NOW()
 );
+"""
+
+# Re-key an already-created table: older builds used product_name as the PK,
+# which collides across size/colour variants. This table is a rebuildable index,
+# so dropping rows that lack the new key is safe (the indexer repopulates it).
+MIGRATE_PE_PK_SQL = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'product_embeddings' AND column_name = 'representative_sku'
+    ) THEN
+        ALTER TABLE product_embeddings ADD COLUMN representative_sku VARCHAR(200);
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.key_column_usage
+        WHERE constraint_name = 'product_embeddings_pkey'
+          AND table_name = 'product_embeddings'
+          AND column_name = 'product_name'
+    ) THEN
+        ALTER TABLE product_embeddings DROP CONSTRAINT product_embeddings_pkey;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'product_embeddings' AND constraint_type = 'PRIMARY KEY'
+    ) THEN
+        DELETE FROM product_embeddings WHERE representative_sku IS NULL;
+        ALTER TABLE product_embeddings ALTER COLUMN representative_sku SET NOT NULL;
+        ALTER TABLE product_embeddings ADD PRIMARY KEY (representative_sku);
+    END IF;
+END $$;
 """
 
 CS_CONVERSATIONS_SQL = """
@@ -96,6 +131,8 @@ def run():
 
         print("Creating product_embeddings ...")
         conn.execute(text(PRODUCT_EMBEDDINGS_SQL))
+        print("Re-keying product_embeddings on representative_sku ...")
+        conn.execute(text(MIGRATE_PE_PK_SQL))
         print("Creating cs_conversations ...")
         conn.execute(text(CS_CONVERSATIONS_SQL))
         print("Creating cs_handoffs ...")

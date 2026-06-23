@@ -18,12 +18,6 @@ _YES_WORDS = ['হ্যাঁ', 'হা', 'হ্যা', 'ha', 'haa', 'haan', 
 _HANDOFF_SENTINEL = 'team handle করবে'
 
 
-def _stock_line(stock_json):
-    parts = [f"{s} ({int(stock_json.get(s) or 0)}টা)"
-             for s in config.SIZES if int(stock_json.get(s) or 0) > 0]
-    return ' · '.join(parts) if parts else None
-
-
 def _order_context(conn, channel, customer_id):
     """Recent orders for this customer. Only resolvable when we have a phone —
     WhatsApp's customer_id IS the phone (waId); FB/IG have no phone mapping."""
@@ -87,12 +81,12 @@ def _resolve_pending_confirmation(conn, session, message):
 
     row = conn.execute(text("""
         SELECT product_name, stock_json, price FROM product_embeddings
-        WHERE product_name = :pn
-    """), {'pn': pending.get('product_name')}).fetchone()
+        WHERE representative_sku = :rs
+    """), {'rs': pending.get('representative_sku')}).fetchone()
     if row:
         m = row._mapping
         stock = memory._coerce(m['stock_json'], {})
-        line = _stock_line(stock)
+        line = config.stock_line(stock)
         if line:
             reply = (f"✅ {m['product_name']} — ৳{int(m['price'] or 0)}\n"
                      f"Available: {line}\n\nকোন সাইজটা নিতে চাচ্ছেন?")

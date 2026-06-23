@@ -49,5 +49,34 @@ TEAM_TELEGRAM_IDS = [
 # ── Matching ────────────────────────────────────────────────────────────────
 SIMILARITY_THRESHOLD = float(os.getenv('SIMILARITY_THRESHOLD', '0.82'))
 
-# Winterfell sells M–3XL only.
+# Letter-size guidance used in the text system prompt. The catalog also has
+# numeric pant sizes (30, 32, …) which stock_line handles generically.
 SIZES = ['M', 'L', 'XL', 'XXL', '3XL']
+
+_SIZE_RANK = {s: i for i, s in enumerate(
+    ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', 'XXXL', '4XL'])}
+
+
+def _size_sort_key(size):
+    """Order letter sizes by the rank above, numeric sizes by value, rest last."""
+    s = str(size).strip()
+    if s in _SIZE_RANK:
+        return (0, _SIZE_RANK[s], s)
+    digits = ''.join(ch for ch in s if ch.isdigit())
+    if digits:
+        return (1, int(digits), s)
+    return (2, 0, s)
+
+
+def stock_line(stock_json):
+    """Format in-stock sizes for a customer reply: 'M (12টা) · L (8টা)'.
+
+    Shows whatever size keys exist in stock_json — letter OR numeric — so pant
+    sizes (30/32/34) display the same as tee sizes. Returns None if nothing is
+    in stock.
+    """
+    items = [(s, int(q or 0)) for s, q in (stock_json or {}).items()
+             if int(q or 0) > 0]
+    items.sort(key=lambda it: _size_sort_key(it[0]))
+    parts = [f"{s} ({q}টা)" for s, q in items]
+    return ' · '.join(parts) if parts else None

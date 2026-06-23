@@ -58,7 +58,7 @@ def _match(conn, description):
     if vec is None:
         return None
     rows = conn.execute(text("""
-        SELECT product_name, stock_json, price,
+        SELECT representative_sku, product_name, stock_json, price,
                1 - (description_embedding <=> CAST(:emb AS vector)) AS similarity
         FROM product_embeddings
         WHERE is_active = TRUE AND description_embedding IS NOT NULL
@@ -66,12 +66,6 @@ def _match(conn, description):
         LIMIT 3
     """), {'emb': embeddings.to_pgvector(vec)}).fetchall()
     return rows[0]._mapping if rows else None
-
-
-def _stock_line(stock_json):
-    parts = [f"{s} ({int(stock_json.get(s) or 0)}টা)"
-             for s in config.SIZES if int(stock_json.get(s) or 0) > 0]
-    return ' · '.join(parts) if parts else None
 
 
 def handle_image(conn, session, image_url):
@@ -100,11 +94,12 @@ def handle_image(conn, session, image_url):
 
     similarity = float(top['similarity'] or 0)
     product_name = top['product_name']
+    representative_sku = top['representative_sku']
     price = int(top['price'] or 0)
     stock = memory._coerce(top['stock_json'], {})
 
     if similarity >= config.SIMILARITY_THRESHOLD:
-        line = _stock_line(stock)
+        line = config.stock_line(stock)
         if line:
             reply = (f"হ্যাঁ ভাই! এটা আমাদের {product_name} 🔥\n\n"
                      f"✅ স্টকে আছে — ৳{price}\n📦 Available: {line}\n\n"
@@ -117,6 +112,7 @@ def handle_image(conn, session, image_url):
     else:
         reply = (f"এটা কি আমাদের {product_name} (৳{price})?\n"
                  f"'হ্যাঁ' বা 'না' reply করুন — তাহলে stock check করে দিচ্ছি 🙏")
-        session['pending_confirmation'] = {'product_name': product_name}
+        session['pending_confirmation'] = {
+            'representative_sku': representative_sku, 'product_name': product_name}
         memory.append_turn(session, '[image]', reply)
         send_reply(channel, customer_id, reply)
