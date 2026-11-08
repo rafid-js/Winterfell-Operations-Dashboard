@@ -112,6 +112,10 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
 
 <div class="kpis" id="kpis"></div>
 
+<div class="card" style="margin-bottom:12px"><h3>Ad spend vs revenue correlation <span>· monthly · hover for detail</span></h3>
+  <div id="c-corr"></div>
+  <div class="legend"><span><i style="background:#3fb950"></i>Revenue</span><span><i style="background:#e5534b"></i>Ad spend</span></div></div>
+
 <div class="grid">
   <div class="card"><h3>ROAS trend <span>· monthly, account-wide</span></h3><div id="c-roas"></div></div>
   <div class="card"><h3>Cost per conversion <span>· monthly ৳/order</span></h3><div id="c-cpc"></div></div>
@@ -240,37 +244,75 @@ function coverChart(el,items){
 }
 
 function monthLbl(m){const [y,mo]=m.split('-');return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+mo-1]+' '+y.slice(2);}
-function lineChart(el,series,key,unit,color){
-  const W=520,H=210,pL=44,pR=12,pT=14,pB=28,iw=W-pL-pR,ih=H-pT-pB;
-  const vals=series.map(s=>s[key]||0),max=Math.max(1,...vals),n=series.length;
+const money2=n=>'৳'+(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+// Shared floating tooltip
+const TIP=document.createElement('div');
+TIP.style.cssText='position:fixed;z-index:60;pointer-events:none;background:#1d242e;border:1px solid #2f3846;border-radius:8px;padding:8px 11px;font-size:12px;color:#e6edf3;box-shadow:0 6px 18px rgba(0,0,0,.45);display:none;min-width:140px';
+document.body.appendChild(TIP);
+function dot(c){return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px;vertical-align:0"></span>`;}
+// Attach hover: overlay rect + guide line already in svg; rowsFn(i)->tooltip html
+function attachHover(el,n,W,pL,iw,xOf,rowsFn){
+  const svg=el.querySelector('svg'), guide=el.querySelector('.guide'), dots=[...el.querySelectorAll('.hpt')];
+  svg.addEventListener('mousemove',e=>{
+    const r=svg.getBoundingClientRect(), sx=(e.clientX-r.left)/r.width*W;
+    let i=n<=1?0:Math.round((sx-pL)/(iw/(n-1))); i=Math.max(0,Math.min(n-1,i));
+    if(guide){guide.setAttribute('x1',xOf(i));guide.setAttribute('x2',xOf(i));guide.style.opacity=1;}
+    dots.forEach((d,j)=>d.setAttribute('r',j===i?5:3));
+    TIP.innerHTML=rowsFn(i);TIP.style.display='block';
+    TIP.style.left=Math.min(e.clientX+14,innerWidth-170)+'px';TIP.style.top=(e.clientY+14)+'px';
+  });
+  svg.addEventListener('mouseleave',()=>{TIP.style.display='none';if(guide)guide.style.opacity=0;
+    dots.forEach(d=>d.setAttribute('r',3));});
+}
+function gridY(pL,W,pR,pT,ih,max,fmt){let s='';for(let g=0;g<=4;g++){const gy=pT+ih-g/4*ih;
+  s+=`<line x1="${pL}" y1="${gy}" x2="${W-pR}" y2="${gy}" stroke="#262d38"/>`;
+  s+=`<text x="${pL-6}" y="${gy+3}" text-anchor="end" fill="#7b8696" font-size="9">${fmt(max*g/4)}</text>`;}return s;}
+
+function corrChart(el,series){
+  const lines=[{key:'revenue',color:'#3fb950',label:'Revenue'},{key:'spend',color:'#e5534b',label:'Ad Spend'}];
+  const W=1040,H=300,pL=62,pR=16,pT=16,pB=40,iw=W-pL-pR,ih=H-pT-pB,n=series.length;
+  const max=Math.max(1,...series.flatMap(p=>lines.map(l=>p[l.key]||0)));
   const x=i=>pL+(n<=1?iw/2:i/(n-1)*iw), y=v=>pT+ih-(v/max)*ih;
-  let s=`<svg viewBox="0 0 ${W} ${H}">`;
-  for(let g=0;g<=4;g++){const gy=pT+ih-g/4*ih,gv=(max*g/4);
-    s+=`<line x1="${pL}" y1="${gy}" x2="${W-pR}" y2="${gy}" stroke="#262d38"/>`;
-    s+=`<text x="${pL-6}" y="${gy+3}" text-anchor="end" fill="#7b8696" font-size="9">${unit?unit(gv):Math.round(gv)}</text>`;}
-  let d='';series.forEach((p,i)=>{d+=(i?'L':'M')+x(i)+' '+y(p[key]||0)+' ';});
+  let s=`<svg viewBox="0 0 ${W} ${H}">`+gridY(pL,W,pR,pT,ih,max,v=>Math.round(v/1000)+'k');
+  lines.forEach(l=>{let d='';series.forEach((p,i)=>d+=(i?'L':'M')+x(i)+' '+y(p[l.key]||0)+' ');
+    s+=`<path d="${d}" fill="none" stroke="${l.color}" stroke-width="2.5"/>`;});
+  s+=`<line class="guide" x1="0" y1="${pT}" x2="0" y2="${pT+ih}" stroke="#4a586b" stroke-dasharray="3 3" style="opacity:0"/>`;
+  lines.forEach((l,li)=>series.forEach((p,i)=>{s+=`<circle class="hpt" data-l="${li}" cx="${x(i)}" cy="${y(p[l.key]||0)}" r="3" fill="${l.color}"/>`;}));
+  series.forEach((p,i)=>s+=`<text x="${x(i)}" y="${H-12}" text-anchor="middle" fill="#9aa7b5" font-size="10">${monthLbl(p.month)}</text>`);
+  el.innerHTML=s+'</svg>';
+  attachHover(el,n,W,pL,iw,x,i=>{const p=series[i];
+    return `<b>${monthLbl(p.month)}</b><br>${dot('#e5534b')}Ad Spend: ${money2(p.spend)}<br>${dot('#3fb950')}Revenue: ${money2(p.revenue)}`;});
+}
+function lineChart(el,series,key,unit,color){
+  const W=520,H=210,pL=44,pR=12,pT=14,pB=30,iw=W-pL-pR,ih=H-pT-pB,n=series.length;
+  const max=Math.max(1,...series.map(s=>s[key]||0));
+  const x=i=>pL+(n<=1?iw/2:i/(n-1)*iw), y=v=>pT+ih-(v/max)*ih;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`+gridY(pL,W,pR,pT,ih,max,v=>unit?unit(v):v.toFixed(1));
+  let d='';series.forEach((p,i)=>d+=(i?'L':'M')+x(i)+' '+y(p[key]||0)+' ');
   s+=`<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`;
-  series.forEach((p,i)=>{s+=`<circle cx="${x(i)}" cy="${y(p[key]||0)}" r="3" fill="${color}"/>`;
-    s+=`<text x="${x(i)}" y="${y(p[key]||0)-7}" text-anchor="middle" fill="#c3cdd8" font-size="9">${(p[key]||0).toFixed(unit?0:2)}${unit?'':'×'}</text>`;
+  s+=`<line class="guide" x1="0" y1="${pT}" x2="0" y2="${pT+ih}" stroke="#4a586b" stroke-dasharray="3 3" style="opacity:0"/>`;
+  series.forEach((p,i)=>{s+=`<circle class="hpt" cx="${x(i)}" cy="${y(p[key]||0)}" r="3" fill="${color}"/>`;
     s+=`<text x="${x(i)}" y="${H-10}" text-anchor="middle" fill="#7b8696" font-size="8.5">${monthLbl(p.month)}</text>`;});
   el.innerHTML=s+'</svg>';
+  attachHover(el,n,W,pL,iw,x,i=>{const p=series[i];
+    return `<b>${monthLbl(p.month)}</b><br>${dot(color)}ROAS: ${(p.roas||0).toFixed(2)}×`;});
 }
 function monthlyBars(el,series,key,color,unit){
-  const W=520,H=210,pL=44,pR=12,pT=14,pB=28,iw=W-pL-pR,ih=H-pT-pB;
-  const vals=series.map(s=>s[key]||0),max=Math.max(1,...vals),n=series.length,bw=iw/n*0.62;
-  let s=`<svg viewBox="0 0 ${W} ${H}">`;
-  for(let g=0;g<=4;g++){const gy=pT+ih-g/4*ih;
-    s+=`<line x1="${pL}" y1="${gy}" x2="${W-pR}" y2="${gy}" stroke="#262d38"/>`;
-    s+=`<text x="${pL-6}" y="${gy+3}" text-anchor="end" fill="#7b8696" font-size="9">${unit?unit(max*g/4):Math.round(max*g/4)}</text>`;}
-  series.forEach((p,i)=>{const v=p[key]||0,bh=v/max*ih,cx=pL+(i+0.5)/n*iw;
-    s+=`<rect x="${cx-bw/2}" y="${pT+ih-bh}" width="${bw}" height="${bh}" rx="3" fill="${color}"/>`;
-    s+=`<text x="${cx}" y="${pT+ih-bh-4}" text-anchor="middle" fill="#c3cdd8" font-size="8.5">${Math.round(v)}</text>`;
+  const W=520,H=210,pL=44,pR=12,pT=14,pB=30,iw=W-pL-pR,ih=H-pT-pB,n=series.length,bw=iw/n*0.6;
+  const max=Math.max(1,...series.map(s=>s[key]||0)), x=i=>pL+(i+0.5)/n*iw;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`+gridY(pL,W,pR,pT,ih,max,v=>unit?unit(v):Math.round(v));
+  s+=`<line class="guide" x1="0" y1="${pT}" x2="0" y2="${pT+ih}" stroke="#4a586b" stroke-dasharray="3 3" style="opacity:0"/>`;
+  series.forEach((p,i)=>{const v=p[key]||0,bh=v/max*ih,cx=x(i);
+    s+=`<rect class="hpt" x="${cx-bw/2}" y="${pT+ih-bh}" width="${bw}" height="${bh}" rx="3" fill="${color}"/>`;
     s+=`<text x="${cx}" y="${H-10}" text-anchor="middle" fill="#7b8696" font-size="8.5">${monthLbl(p.month)}</text>`;});
   el.innerHTML=s+'</svg>';
+  attachHover(el,n,W,pL,iw,x,i=>{const p=series[i];
+    return `<b>${monthLbl(p.month)}</b><br>${dot(color)}Cost/conversion: ${money2(p.cpc)}<br><span class="muted">${p.orders} orders</span>`;});
 }
 async function loadSeries(){
   const s=await jget('/api/ad-allocator/timeseries?months=7');
-  if(!s||!s.length){$('#c-roas').innerHTML='<div class="muted" style="padding:20px">No monthly data yet.</div>';return;}
+  if(!s||!s.length){$('#c-corr').innerHTML=$('#c-roas').innerHTML='<div class="muted" style="padding:20px">No monthly data yet — backfill ad_spend.</div>';return;}
+  corrChart($('#c-corr'),s);
   lineChart($('#c-roas'),s,'roas',null,'#8b7bff');
   monthlyBars($('#c-cpc'),s,'cpc','#6aa8ff',v=>'৳'+Math.round(v));
 }
