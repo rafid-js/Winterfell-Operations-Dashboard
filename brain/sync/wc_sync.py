@@ -316,11 +316,13 @@ def sync_orders():
         log.error(f"{err} errors during WC order sync")
 
 
-def sync_products():
+def sync_products(full=False):
     print(f"\n=== WooCommerce Products → SKU images  {datetime.now():%Y-%m-%d %H:%M} ===\n")
     log = SyncLog('woocommerce', 'products')
-    since = log.last_record_at()
+    since = None if full else log.last_record_at()
     modified_after = since.isoformat() if since else None
+    if full:
+        print("  Full pass (ignoring incremental watermark) — backfills wc_variation_id\n")
 
     ok = skip = 0
 
@@ -441,11 +443,14 @@ if __name__ == '__main__':
     g.add_argument('--orders',    action='store_true', help='Sync orders, customers, line items')
     g.add_argument('--products',  action='store_true', help='Sync product image URLs')
     g.add_argument('--reconcile', action='store_true', help='Merge WC-XXXX duplicates into Nuport orders')
+    ap.add_argument('--full', action='store_true',
+                    help='With --products: ignore the incremental watermark and '
+                         'process every product (backfills wc_variation_id)')
     args = ap.parse_args()
 
     if args.orders:
         sync_orders()
     elif args.products:
-        sync_products()
+        sync_products(full=args.full)
     elif args.reconcile:
         reconcile_duplicates()
