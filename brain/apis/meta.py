@@ -118,6 +118,32 @@ class MetaClient:
             )
         return r.json()
 
+    def get_ad_insights(self, since: str, until: str) -> list:
+        """Daily insights at level=ad including purchases (omni_purchase) and
+        purchase value, for the Ad Allocator's per-ad spend attribution."""
+        params = {
+            'fields': ('spend,ad_id,ad_name,adset_id,adset_name,campaign_id,'
+                       'campaign_name,actions,action_values,date_start,date_stop'),
+            'level': 'ad',
+            'time_increment': 1,
+            'time_range': f'{{"since":"{since}","until":"{until}"}}',
+            'limit': 500,
+        }
+        self._ensure_auth()
+        path = f"/{self._ad_account_id}/insights"
+        results = []
+        while True:
+            data = self._get(path, params)
+            results.extend(data.get('data', []))
+            next_url = (data.get('paging') or {}).get('next')
+            if not next_url:
+                break
+            after = _extract_after_cursor(next_url)
+            if not after:
+                break
+            params['after'] = after
+        return results
+
     # ── Account ───────────────────────────────────────────────────────────────
 
     def get_account_info(self) -> dict:

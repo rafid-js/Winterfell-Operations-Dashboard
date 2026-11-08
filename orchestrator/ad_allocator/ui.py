@@ -62,7 +62,17 @@ tr:hover td{background:#12171e}
 .pill.hold{color:var(--mut);background:#1c2029}
 .pill.pause,.pill.cap_stop{color:var(--red);background:#2a1215}
 .pill.low_stock,.pill.reorder{color:var(--yellow);background:#2a220f}
+.pill.needs_mapping{color:#f6b26b;background:#2a220f;border:1px solid #4a3c1a}
+.pill.scale{color:var(--teal-l);background:var(--teal-d)}
+.pill.cut{color:var(--red);background:#2a1215}
+.pill.wait,.pill.review{color:var(--mut);background:#1c2029}
 .pill.test{color:var(--blue-l);background:#13233d}
+.banner{background:#2a220f;border:1px solid #4a3c1a;color:var(--yellow);
+  border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:.82rem;display:none}
+.tabs{display:flex;gap:4px;margin:0 0 10px}
+.tab{background:var(--panel);border:1px solid var(--line);color:var(--mut);
+  border-radius:7px 7px 0 0;padding:6px 14px;font-size:.82rem;cursor:pointer}
+.tab.on{background:var(--teal-d);border-color:#1c5049;color:var(--teal-l)}
 .neg{color:var(--red)} .pos{color:var(--teal-l)}
 .section-title{font-size:.95rem;font-weight:700;margin:22px 0 10px}
 .btn{background:var(--teal-d);border:1px solid #1c5049;color:var(--teal-l);
@@ -110,6 +120,14 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
   <span class="muted" id="range" style="margin-left:auto;font-size:.74rem"></span>
 </div>
 
+<div id="unmapped-banner" class="banner"></div>
+
+<div class="tabs">
+  <button class="tab on" data-tab="alloc">Allocation</button>
+  <button class="tab" data-tab="ads">Ads</button>
+</div>
+
+<div id="view-alloc">
 <div class="kpis" id="kpis"></div>
 
 <div class="card" style="margin-bottom:12px"><h3>Ad spend vs revenue correlation <span>· monthly · hover for detail</span></h3>
@@ -173,13 +191,32 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
   </div>
   <div class="formrow">
     <span class="muted">Bootstrap from catalog:</span>
+    <button class="btn ghost" id="boot-prod">By product (recommended)</button>
     <button class="btn ghost" id="boot-cat">By category</button>
-    <button class="btn ghost" id="boot-prod">By product</button>
+    <button class="btn ghost" id="sync-ads">Sync Meta ads</button>
     <button class="btn ghost" id="suggest">Suggest ad → group</button>
   </div>
   <div id="groups-list" class="muted" style="font-size:.78rem"></div>
   <div id="suggest-list" style="font-size:.78rem;margin-top:8px"></div>
 </details>
+</div><!-- /view-alloc -->
+
+<div id="view-ads" style="display:none">
+  <div id="unmapped-ads-card" class="card" style="margin-bottom:12px;display:none">
+    <h3>Unmapped ads <span>· map to attribute spend</span></h3>
+    <div class="tablewrap"><table id="unmapped-ads"><thead><tr>
+      <th class="l">Ad</th><th class="l">Ad set</th><th>Spend</th><th class="l">Map to group</th>
+    </tr></thead><tbody></tbody></table></div>
+  </div>
+  <div class="card"><h3>Ads <span>· per-ad spend, purchases, CPP vs break-even, verdict</span></h3>
+    <div class="tablewrap"><table id="ads"><thead><tr>
+      <th class="l">Ad</th><th class="l">Group</th><th>Spend</th><th>Purchases</th>
+      <th>Ad CPP</th><th>Break-even</th><th>Days</th><th class="l">Verdict</th>
+    </tr></thead><tbody></tbody></table></div>
+    <div class="muted" id="ads-empty" style="padding:12px;display:none">
+      No ad-level data yet — click <b>Sync Meta ads</b> in the Allocation tab's mapping admin.</div>
+  </div>
+</div>
 
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -359,17 +396,21 @@ function renderPools(p){
     <div class="legend"><span>Guardrails: max ±20%/ad-set/day · min 2 days data · learning threshold ~50 purchases/wk</span></div>`;
 }
 function renderTable(rows){
-  $('#alloc tbody').innerHTML=rows.map(r=>`<tr>
+  $('#alloc tbody').innerHTML=rows.map(r=>{
+    const ns=!r.has_spend;  // no mapped spend → never show fake CPP/profit/amount
+    const cpp=ns?'<span class="muted">No spend</span>':`${fmt0(r.cpp)} / ${fmt0(r.break_even_cpp)}`;
+    const prof=ns?'<span class="muted">—</span>':`<span class="${r.est_profit<0?'neg':'pos'}">${fmt(r.est_profit)}</span>`;
+    const rec=(r.action==='needs_mapping')?'<span class="muted">—</span>':fmt(r.rec_amount);
+    const gap=(r.action==='needs_mapping')?'<span class="muted">—</span>':`<span class="${r.gap<0?'neg':'pos'}">${(r.gap<0?'':'+')+fmt(r.gap)}</span>`;
+    const share=(r.action==='needs_mapping')?'—':((r.rec_share||0)*100).toFixed(1)+'%';
+    return `<tr>
     <td class="l mono">${r.rank}</td><td class="l">${r.name}${r.is_clearance?' <span class="pill cap_stop">clr</span>':''}${r.is_new?' <span class="pill test">new</span>':''}</td>
     <td class="mono">${fmt0(r.units)}</td><td class="mono">${fmt0(r.orders)}</td>
-    <td class="mono">${fmt(r.revenue)}</td><td class="mono">${fmt(r.spend)}</td>
-    <td class="mono ${r.est_profit<0?'neg':'pos'}">${fmt(r.est_profit)}</td>
-    <td class="mono">${fmt0(r.cpp)} / ${fmt0(r.break_even_cpp)}</td>
+    <td class="mono">${fmt(r.revenue)}</td><td class="mono">${ns?'<span class="muted">0</span>':fmt(r.spend)}</td>
+    <td class="mono">${prof}</td><td class="mono">${cpp}</td>
     <td class="mono">${r.cover_days>=999?'∞':Math.round(r.cover_days)+'d'}</td>
-    <td class="mono">${((r.rec_share||0)*100).toFixed(1)}%</td>
-    <td class="mono">${fmt(r.rec_amount)}</td>
-    <td class="mono ${r.gap<0?'neg':'pos'}">${(r.gap<0?'':'+')+fmt(r.gap)}</td>
-    <td class="l"><span class="pill ${r.action}">${r.action.replace('_','/')}</span></td></tr>`).join('');
+    <td class="mono">${share}</td><td class="mono">${rec}</td><td class="mono">${gap}</td>
+    <td class="l"><span class="pill ${r.action}">${r.action.replace(/_/g,' ')}</span></td></tr>`;}).join('');
 }
 async function load(){
   const d=await jget(`/api/ad-allocator/overview?period=${STATE.period}&mode=${STATE.mode}`);
@@ -378,8 +419,38 @@ async function load(){
   $('#badge').className='badge '+(sample?'sample':'live'); $('#badge').textContent=sample?'SAMPLE':'LIVE';
   $('#range').textContent=d.since==='sample'?'sample data':`${d.since} → ${d.until} · ${d.days}d`;
   renderKpis(d.kpis);
+  const b=$('#unmapped-banner');
+  if(d.unmapped_spend>0){b.style.display='block';
+    b.innerHTML=`⚠ <b>${fmt(d.unmapped_spend)}</b> of ad spend is unmapped (of ${fmt(d.total_ad_spend)} total). Map ads to product groups so spend attributes — open the <b>Ads</b> tab or the mapping admin below.`;}
+  else b.style.display='none';
   const rows=filteredRows(); renderCharts(rows); renderPools(d.pools); renderTable(rows);
 }
+const verdictPill={scale:'scale',cut:'cut',wait:'wait',review:'review'};
+async function loadAds(){
+  const [d,un]=await Promise.all([jget('/api/ad-allocator/ads?period='+STATE.period),jget('/api/ad-allocator/unmapped-ads?period='+STATE.period)]);
+  const ads=d.ads||[];
+  $('#ads-empty').style.display=ads.length?'none':'block';
+  $('#ads tbody').innerHTML=ads.map(a=>`<tr>
+    <td class="l">${(a.ad_name||a.ad_id||'').slice(0,34)}</td>
+    <td class="l ${a.group_name?'':'muted'}">${a.group_name||'unmapped'}</td>
+    <td class="mono">${fmt(a.spend)}</td><td class="mono">${a.purchases}</td>
+    <td class="mono">${a.cpp==null?'<span class="muted">—</span>':fmt(a.cpp)}</td>
+    <td class="mono">${a.break_even_cpp==null?'<span class="muted">—</span>':fmt(a.break_even_cpp)}</td>
+    <td class="mono">${a.ndays}</td>
+    <td class="l"><span class="pill ${verdictPill[a.verdict]||'review'}">${a.verdict}</span></td></tr>`).join('')
+    ||'<tr><td colspan=8 class="muted">No ads.</td></tr>';
+  const card=$('#unmapped-ads-card'), g=GROUPS.length?GROUPS:await jget('/api/ad-allocator/groups');GROUPS=g;
+  if(un.length&&g.length){card.style.display='';
+    const opts=g.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
+    $('#unmapped-ads tbody').innerHTML=un.map(a=>`<tr>
+      <td class="l">${(a.ad_name||a.ad_id||'').slice(0,34)}</td><td class="l muted">${(a.adset_name||'').slice(0,24)}</td>
+      <td class="mono">${fmt(a.spend)}</td>
+      <td class="l"><select id="ua-${a.ad_id}">${opts}</select>
+        <button class="btn" onclick='mapAd("${a.ad_id}")'>Map</button></td></tr>`).join('');
+  } else card.style.display='none';
+}
+window.mapAd=async(aid)=>{const gid=$('#ua-'+aid).value;
+  await jpost('/api/ad-allocator/maps',{product_group_id:parseInt(gid),meta_ad_id:aid});loadAds();load();};
 async function loadChanges(){
   if(!STATE.runId){$('#changes tbody').innerHTML='';return;}
   const cr=await jget('/api/ad-allocator/changes?run_id='+STATE.runId);
@@ -409,14 +480,22 @@ $('#push').onclick=async()=>{if(!confirm('Push all APPROVED budget changes to Me
 $('#g-add').onclick=async()=>{const n=$('#g-name').value.trim();if(!n)return;
   await jpost('/api/ad-allocator/groups',{name:n,category:$('#g-cat').value,is_new:$('#g-new').checked,is_clearance:$('#g-clr').checked});
   $('#g-name').value='';loadGroups();};
+// tabs
+$$('.tab').forEach(t=>t.onclick=()=>{$$('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');
+  const ads=t.dataset.tab==='ads';$('#view-alloc').style.display=ads?'none':'';$('#view-ads').style.display=ads?'':'none';
+  if(ads)loadAds();});
 async function boot(mode){const r=await jpost('/api/ad-allocator/bootstrap-groups',{mode});
-  alert(`Created/updated ${r.created} groups (${r.mode}). Now click "Suggest ad → group" to map your ad sets.`);loadGroups();}
+  alert(`Created ${r.groups} groups, mapped ${r.skus_mapped} SKUs (${r.mode}). Now Sync Meta ads, then Suggest ad → group.`);loadGroups();load();}
 $('#boot-cat').onclick=()=>boot('category');
 $('#boot-prod').onclick=()=>boot('product');
-$('#suggest').onclick=async()=>{const s=await jget('/api/ad-allocator/suggest');
-  $('#suggest-list').innerHTML='<b>Suggestions</b> (click to map): '+(s.length?s.map(x=>
-    `<button class="btn ghost" onclick='addMap(${x.product_group_id},"${x.adset_id}")'>${x.adset_name||x.adset_id} → ${x.group_name}</button>`).join(' '):'<span class="muted">none</span>');};
-window.addMap=async(g,a)=>{await jpost('/api/ad-allocator/maps',{product_group_id:g,meta_adset_id:a});alert('Mapped.');};
+$('#sync-ads').onclick=async()=>{$('#sync-ads').textContent='Syncing…';
+  const r=await jpost('/api/ad-allocator/sync-ads',{days:30});
+  $('#sync-ads').textContent='Sync Meta ads';
+  alert(r.error?('Sync failed: '+r.error):`Synced ${r.rows} ad-day rows (${r.since} → ${r.until}).`);load();loadUnmapped();};
+$('#suggest').onclick=async()=>{const s=await jget('/api/ad-allocator/suggest-ads?period='+STATE.period);
+  $('#suggest-list').innerHTML='<b>Ad → group suggestions</b> (click to map): '+(s.length?s.map(x=>
+    `<button class="btn ghost" onclick='addMap(${x.product_group_id},"${x.ad_id}")'>${(x.ad_name||x.ad_id).slice(0,24)} → ${x.group_name}</button>`).join(' '):'<span class="muted">none — sync Meta ads first</span>');};
+window.addMap=async(g,a)=>{await jpost('/api/ad-allocator/maps',{product_group_id:g,meta_ad_id:a});load();loadAds();};
 let GROUPS=[];
 async function loadUnmapped(){
   const [u,g]=await Promise.all([jget('/api/ad-allocator/unmapped-adsets?period='+STATE.period),jget('/api/ad-allocator/groups')]);

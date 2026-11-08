@@ -46,77 +46,81 @@ def _spend_by_key(conn, since, until):
     return [dict(r._mapping) for r in rows]
 
 
-def _product_rows(conn, since, until, counted):
+# ── Orders & stock rolled up SKU -> group via aa_sku_group_map ────────────────
+
+def _orders_by_group(conn, since, until, counted):
+    """{group_id: {orders, units, revenue}} from counted order lines, rolled up
+    SKU -> group. A SKU belongs to exactly one group, so no overlap/mixing."""
     rows = conn.execute(text("""
-        SELECT oi.product_name                       AS product_name,
-               COUNT(*)                              AS lines,
-               SUM(COALESCE(oi.quantity,0))          AS units,
-               SUM(COALESCE(oi.total_price,0))       AS revenue
+        SELECT m.product_group_id            AS gid,
+               COUNT(*)                       AS lines,
+               SUM(COALESCE(oi.quantity,0))   AS units,
+               SUM(COALESCE(oi.total_price,0))AS revenue
         FROM order_items oi
         JOIN orders o ON oi.so_number = o.so_number
+        JOIN aa_sku_group_map m ON m.sku = oi.sku
         WHERE o.order_date::date BETWEEN :since AND :until
           AND lower(COALESCE(o.wc_status, o.nuport_status, '')) = ANY(:counted)
-          AND oi.product_name IS NOT NULL
-        GROUP BY oi.product_name
+        GROUP BY m.product_group_id
     """), {'since': since, 'until': until,
            'counted': [s.lower() for s in counted]}).fetchall()
-    return [dict(r._mapping) for r in rows]
+    return {r._mapping['gid']: {'orders': int(r._mapping['lines'] or 0),
+                                'units': float(r._mapping['units'] or 0),
+                                'revenue': float(r._mapping['revenue'] or 0)} for r in rows}
 
 
-def _stock_rows(conn):
+def _stock_by_group(conn):
     rows = conn.execute(text("""
-        SELECT product_name, SUM(COALESCE(current_stock,0)) AS on_hand
-        FROM skus WHERE is_active = TRUE AND product_name IS NOT NULL
-        GROUP BY product_name
+        SELECT m.product_group_id AS gid, SUM(COALESCE(s.current_stock,0)) AS on_hand
+        FROM skus s JOIN aa_sku_group_map m ON m.sku = s.sku
+        WHERE s.is_active = TRUE
+        GROUP BY m.product_group_id
     """)).fetchall()
-    return [dict(r._mapping) for r in rows]
+    return {r._mapping['gid']: float(r._mapping['on_hand'] or 0) for r in rows}
 
 
-def _attribute_products(groups, product_rows):
-    """Sum line/unit/revenue per group by case-insensitive name containment."""
-    out = {g['id']: {'orders': 0, 'units': 0.0, 'revenue': 0.0} for g in groups}
-    lowered = [(g['id'], g['name'].lower()) for g in groups]
-    for pr in product_rows:
-        pname = (pr['product_name'] or '').lower()
-        for gid, gname in lowered:
-            if gname and gname in pname:
-                out[gid]['orders'] += int(pr['lines'] or 0)
-                out[gid]['units'] += float(pr['units'] or 0)
-                out[gid]['revenue'] += float(pr['revenue'] or 0)
-    return out
+# ── Spend attribution: per-AD (preferred) with adset-level fallback ──────────
+
+def _ad_spend_rows(conn, since, until):
+    """Per-ad spend rows from aa_meta_ad_daily if synced, else None."""
+    rows = conn.execute(text("""
+        SELECT ad_id, adset_id, campaign_id, SUM(COALESCE(spend_bdt,0)) AS spend
+        FROM aa_meta_ad_daily
+        WHERE account_id = :acct AND date BETWEEN :since AND :until
+        GROUP BY ad_id, adset_id, campaign_id
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchall()
+    return [dict(r._mapping) for r in rows] if rows else None
 
 
-def _attribute_stock(groups, stock_rows):
+def _attribute_spend(groups, mapping, ad_rows, adset_rows):
+    """Attribute spend to groups. Prefer per-ad rows (ad_id -> group), falling
+    back to adset-level rows when the ad-level table isn't synced. Returns
+    (spend_by_group, mapped_total, total_spend)."""
     out = {g['id']: 0.0 for g in groups}
-    lowered = [(g['id'], g['name'].lower()) for g in groups]
-    for sr in stock_rows:
-        pname = (sr['product_name'] or '').lower()
-        for gid, gname in lowered:
-            if gname and gname in pname:
-                out[gid] += float(sr['on_hand'] or 0)
-    return out
-
-
-def _attribute_spend(groups, mapping, spend_rows):
-    """Attribute each spend row to a group via adset match, else campaign, × weight."""
-    out = {g['id']: 0.0 for g in groups}
-    by_adset, by_campaign = {}, {}
+    by_ad, by_adset, by_campaign = {}, {}, {}
     for mp in mapping:
+        w = float(mp.get('weight') or 1)
+        if mp.get('meta_ad_id'):
+            by_ad.setdefault(str(mp['meta_ad_id']), []).append((mp['product_group_id'], w))
         if mp.get('meta_adset_id'):
-            by_adset[str(mp['meta_adset_id'])] = (mp['product_group_id'], float(mp['weight'] or 1))
+            by_adset.setdefault(str(mp['meta_adset_id']), []).append((mp['product_group_id'], w))
         if mp.get('meta_campaign_id'):
-            by_campaign[str(mp['meta_campaign_id'])] = (mp['product_group_id'], float(mp['weight'] or 1))
-    mapped_total = 0.0
-    for sr in spend_rows:
+            by_campaign.setdefault(str(mp['meta_campaign_id']), []).append((mp['product_group_id'], w))
+
+    rows = ad_rows if ad_rows is not None else adset_rows
+    total = mapped = 0.0
+    for sr in rows:
         spend = float(sr['spend'] or 0)
-        key_as, key_cp = str(sr.get('adset_id')), str(sr.get('campaign_id'))
-        hit = by_adset.get(key_as) or by_campaign.get(key_cp)
-        if hit:
-            gid, weight = hit
-            if gid in out:
-                out[gid] += spend * weight
-                mapped_total += spend * weight
-    return out, mapped_total
+        total += spend
+        hits = (by_ad.get(str(sr.get('ad_id'))) if ad_rows is not None else None) \
+            or by_adset.get(str(sr.get('adset_id'))) \
+            or by_campaign.get(str(sr.get('campaign_id')))
+        if hits:
+            for gid, w in hits:
+                if gid in out:
+                    out[gid] += spend * w
+                    mapped += spend * w
+    return out, mapped, total
 
 
 def account_totals(conn, since, until, counted):
@@ -201,41 +205,52 @@ def assemble_live(conn, period, cfg, status_filter=None):
     mapping = [dict(r._mapping) for r in conn.execute(text(
         "SELECT * FROM aa_ad_product_map")).fetchall()]
 
-    spend_rows = _spend_by_key(conn, since, until)
-    prod = _attribute_products(groups, _product_rows(conn, since, until, counted))
-    prod7 = _attribute_products(groups, _product_rows(conn, w_since, until, counted))
-    prod3 = _attribute_products(groups, _product_rows(conn, d_since, until, counted))
-    prodp = _attribute_products(groups, _product_rows(conn, p_since, p_until, counted))
-    stock = _attribute_stock(groups, _stock_rows(conn))
-    spend_by_g, mapped_total = _attribute_spend(groups, mapping, spend_rows)
-    spend7_by_g, _ = _attribute_spend(groups, mapping, _spend_by_key(conn, w_since, until))
-    spendp_by_g, _ = _attribute_spend(groups, mapping, _spend_by_key(conn, p_since, p_until))
+    # Orders rolled up SKU -> group (never by name match).
+    ord_p = _orders_by_group(conn, since, until, counted)
+    ord_7 = _orders_by_group(conn, w_since, until, counted)
+    ord_3 = _orders_by_group(conn, d_since, until, counted)
+    ord_pr = _orders_by_group(conn, p_since, p_until, counted)
+    stock = _stock_by_group(conn)
+
+    # Spend attributed per-ad (preferred) with adset-level fallback.
+    spend_by_g, mapped_total, total_spend = _attribute_spend(
+        groups, mapping, _ad_spend_rows(conn, since, until), _spend_by_key(conn, since, until))
+    spend7_by_g, _, _ = _attribute_spend(
+        groups, mapping, _ad_spend_rows(conn, w_since, until), _spend_by_key(conn, w_since, until))
+    spendp_by_g, _, _ = _attribute_spend(
+        groups, mapping, _ad_spend_rows(conn, p_since, p_until), _spend_by_key(conn, p_since, p_until))
 
     metrics = []
     for g in groups:
         gid = g['id']
-        prev_orders = prod[gid]['orders'] and prodp[gid]['orders']
-        cpp_prev = engine._div(spendp_by_g[gid], prodp[gid]['orders']) if prodp[gid]['orders'] else 0
+        o = ord_p.get(gid, {'orders': 0, 'units': 0.0, 'revenue': 0.0})
+        opr = ord_pr.get(gid, {'orders': 0})
+        g_spend = spend_by_g.get(gid, 0.0)
+        has_spend = g_spend > 0
+        cpp_prev = engine._div(spendp_by_g.get(gid, 0.0), opr['orders']) if opr['orders'] else 0
         raw = {
-            'orders': prod[gid]['orders'], 'units': prod[gid]['units'],
-            'revenue': prod[gid]['revenue'], 'spend': spend_by_g[gid],
-            'period_days': days, 'units_7d': prod7[gid]['units'],
-            'units_3d': prod3[gid]['units'], 'spend_7d': spend7_by_g[gid],
-            'cpp_prev': cpp_prev, 'on_hand': stock[gid],
-            'in_stock': stock[gid] > 0, 'is_new': bool(g['is_new']),
-            'is_clearance': bool(g['is_clearance']),
+            'orders': o['orders'], 'units': o['units'], 'revenue': o['revenue'],
+            'spend': g_spend, 'period_days': days,
+            'units_7d': ord_7.get(gid, {}).get('units', 0.0),
+            'units_3d': ord_3.get(gid, {}).get('units', 0.0),
+            'spend_7d': spend7_by_g.get(gid, 0.0), 'cpp_prev': cpp_prev,
+            'on_hand': stock.get(gid, 0.0), 'in_stock': stock.get(gid, 0.0) > 0,
+            'is_new': bool(g['is_new']), 'is_clearance': bool(g['is_clearance']),
+            'has_spend': has_spend,
             'cogs_pct': float(g['cogs_pct']) if g['cogs_pct'] is not None else cfg['cogs_pct'],
         }
         d = engine.compute_group(raw, cfg)
         d.update({'id': gid, 'name': g['name'], 'category': g['category'],
                   'in_stock': raw['in_stock'], 'is_new': raw['is_new'],
-                  'is_clearance': raw['is_clearance'], 'on_hand': raw['on_hand']})
+                  'is_clearance': raw['is_clearance'], 'on_hand': raw['on_hand'],
+                  'has_spend': has_spend})
         metrics.append(d)
 
-    total_spend = sum(float(s['spend'] or 0) for s in spend_rows)
     unmapped_spend = max(0.0, total_spend - mapped_total)
     return {'groups': metrics, 'days': days,
             'unmapped_spend': round(unmapped_spend, 2),
+            'mapped_spend': round(mapped_total, 2),
+            'total_ad_spend': round(total_spend, 2),
             'account': account_totals(conn, since, until, counted),
             'since': since.isoformat(), 'until': until.isoformat()}
 
@@ -260,16 +275,79 @@ def assemble_sample(cfg):
         raw = {'orders': orders, 'units': orders * 1.3, 'revenue': aov * orders,
                'spend': spend, 'period_days': 7, 'units_7d': u7, 'units_3d': u3,
                'spend_7d': spend, 'cpp_prev': spend / orders * 0.92,
-               'on_hand': on_hand, 'in_stock': on_hand > 0,
+               'on_hand': on_hand, 'in_stock': on_hand > 0, 'has_spend': True,
                'is_new': is_new, 'is_clearance': is_clr, 'cogs_pct': cfg['cogs_pct']}
         d = engine.compute_group(raw, cfg)
         d.update({'id': i, 'name': name, 'category': 'Sample',
                   'in_stock': on_hand > 0, 'is_new': is_new,
-                  'is_clearance': is_clr, 'on_hand': on_hand})
+                  'is_clearance': is_clr, 'on_hand': on_hand, 'has_spend': True})
         metrics.append(d)
     acct = {'orders': sum(g['orders'] for g in metrics),
             'units': sum(g['units'] for g in metrics),
             'revenue': sum(g['revenue'] for g in metrics),
             'total_spend': sum(g['spend'] for g in metrics) + 4200.0}
     return {'groups': metrics, 'days': 7, 'unmapped_spend': 4200.0,
+            'mapped_spend': round(sum(g['spend'] for g in metrics), 2),
+            'total_ad_spend': round(acct['total_spend'], 2),
             'account': acct, 'since': 'sample', 'until': 'sample'}
+
+
+# ── Ads tab: per-ad view with verdict ────────────────────────────────────────
+
+def ads_view(conn, period, cfg):
+    """Per-ad rows: spend, Meta purchases, ad CPP, mapped group, that group's
+    break-even CPP, and a verdict (scale / cut / wait)."""
+    since, until, days = period_bounds(period)
+    counted = config_store.counted_slugs(conn)
+    min_days = int(cfg['min_days_data'])
+
+    # ad -> group from the mapping (ad level only here)
+    ad_map = {str(r._mapping['meta_ad_id']): r._mapping['product_group_id']
+              for r in conn.execute(text(
+                  "SELECT meta_ad_id, product_group_id FROM aa_ad_product_map "
+                  "WHERE meta_ad_id IS NOT NULL")).fetchall()}
+
+    # group break-even CPP = 0.275 × AOV (clearance 0), from mapped orders
+    ord_g = _orders_by_group(conn, since, until, counted)
+    gmeta = {r._mapping['id']: dict(r._mapping) for r in conn.execute(text(
+        "SELECT id, name, is_clearance FROM aa_product_group")).fetchall()}
+    margin_rate = float(cfg['kept_rate']) * (1 - float(cfg['cogs_pct']))
+    be_by_group = {}
+    for gid, o in ord_g.items():
+        aov = (o['revenue'] / o['orders']) if o['orders'] else 0
+        be = 0.0 if (gmeta.get(gid) or {}).get('is_clearance') else margin_rate * aov
+        be_by_group[gid] = be
+
+    rows = conn.execute(text("""
+        SELECT ad_id, MAX(ad_name) AS ad_name, MAX(adset_name) AS adset_name,
+               SUM(COALESCE(spend_bdt,0)) AS spend, SUM(COALESCE(purchases,0)) AS purchases,
+               COUNT(DISTINCT date) AS ndays
+        FROM aa_meta_ad_daily
+        WHERE account_id = :acct AND date BETWEEN :since AND :until
+        GROUP BY ad_id ORDER BY spend DESC
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchall()
+
+    out = []
+    for r in rows:
+        m = r._mapping
+        spend, purch = float(m['spend'] or 0), int(m['purchases'] or 0)
+        gid = ad_map.get(str(m['ad_id']))
+        cpp = (spend / purch) if purch else None
+        be = be_by_group.get(gid)
+        if int(m['ndays'] or 0) < min_days:
+            verdict = 'wait'
+        elif cpp is None:
+            verdict = 'cut' if spend > 0 else 'wait'
+        elif be and cpp <= be:
+            verdict = 'scale'
+        elif be and cpp > be:
+            verdict = 'cut'
+        else:
+            verdict = 'review'
+        out.append({'ad_id': m['ad_id'], 'ad_name': m['ad_name'], 'adset_name': m['adset_name'],
+                    'spend': round(spend, 2), 'purchases': purch,
+                    'cpp': round(cpp, 2) if cpp is not None else None,
+                    'group_id': gid, 'group_name': (gmeta.get(gid) or {}).get('name'),
+                    'break_even_cpp': round(be, 2) if be else None,
+                    'ndays': int(m['ndays'] or 0), 'verdict': verdict})
+    return {'ads': out, 'since': since.isoformat(), 'until': until.isoformat()}

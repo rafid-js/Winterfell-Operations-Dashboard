@@ -27,14 +27,14 @@ def _build_overview(conn, period, mode, cfg):
     alloc = engine.allocate(groups, cfg)
 
     days = assembled['days']
-    mapped_spend = sum(g['spend'] for g in groups)
     unmapped = float(assembled['unmapped_spend'])
+    mapped_spend = float(assembled.get('mapped_spend', sum(g['spend'] for g in groups)))
+    # Spend reconciles exactly: mapped (group rows) + unmapped = total Meta spend.
+    total_spend = float(assembled.get('total_ad_spend', mapped_spend + unmapped))
 
-    # Headline KPIs are ACCOUNT-WIDE (all counted orders + all account spend), so
-    # they stay correct regardless of how complete the ad→group mapping is. The
-    # allocation table below stays group-scoped.
+    # Orders / revenue stay ACCOUNT-WIDE (all counted orders) so the headline is
+    # correct regardless of how complete the ad→group mapping is.
     acct = assembled.get('account') or {}
-    total_spend = float(acct.get('total_spend', mapped_spend + unmapped))
     orders = int(acct.get('orders', sum(g['orders'] for g in groups)))
     units = int(acct.get('units', sum(g['units'] for g in groups)))
     revenue = float(acct.get('revenue', sum(g['revenue'] for g in groups)))
@@ -55,6 +55,8 @@ def _build_overview(conn, period, mode, cfg):
     }
     return {'kpis': kpis, 'allocation': alloc, 'pools': alloc['pools'],
             'rows': alloc['rows'], 'days': days, 'mode': mode, 'period': period,
+            'unmapped_spend': round(unmapped, 2), 'mapped_spend': round(mapped_spend, 2),
+            'total_ad_spend': round(total_spend, 2),
             'since': assembled['since'], 'until': assembled['until']}
 
 
@@ -144,10 +146,45 @@ def api_map_delete(map_id):
 
 @aa_bp.route('/api/ad-allocator/bootstrap-groups', methods=['POST'])
 def api_bootstrap_groups():
-    mode = (request.get_json(silent=True) or {}).get('mode', 'category')
+    mode = (request.get_json(silent=True) or {}).get('mode', 'product')
     with get_connection() as conn:
-        created = mapping.bootstrap_from_catalog(conn, mode)
-    return jsonify({'created': created, 'mode': mode})
+        res = mapping.bootstrap_from_catalog(conn, mode)
+    return jsonify({**res, 'mode': mode})
+
+
+@aa_bp.route('/api/ad-allocator/sync-ads', methods=['POST'])
+def api_sync_ads():
+    days = (request.get_json(silent=True) or {}).get('days', 30)
+    from . import ad_sync
+    try:
+        res = ad_sync.run(days)
+        return jsonify(res)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'error': str(e)}), 500
+
+
+@aa_bp.route('/api/ad-allocator/ads')
+def api_ads():
+    period = request.args.get('period', '30d')
+    with get_connection() as conn:
+        cfg = config_store.load_config(conn)
+        return jsonify(data.ads_view(conn, period, cfg))
+
+
+@aa_bp.route('/api/ad-allocator/unmapped-ads')
+def api_unmapped_ads():
+    period = request.args.get('period', '30d')
+    since, until, _ = data.period_bounds(period)
+    with get_connection() as conn:
+        return jsonify(mapping.unmapped_ads(conn, since, until))
+
+
+@aa_bp.route('/api/ad-allocator/suggest-ads')
+def api_suggest_ads():
+    period = request.args.get('period', '30d')
+    since, until, _ = data.period_bounds(period)
+    with get_connection() as conn:
+        return jsonify(mapping.suggest_ads(conn, since, until))
 
 
 @aa_bp.route('/api/ad-allocator/suggest')

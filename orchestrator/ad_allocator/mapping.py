@@ -64,44 +64,59 @@ def delete_map(conn, map_id):
     conn.commit()
 
 
-# ── Bootstrap groups from the live catalog ───────────────────────────────────
+# ── SKU → group rollup ───────────────────────────────────────────────────────
 
-def bootstrap_from_catalog(conn, mode='category'):
-    """Seed aa_product_group from skus so the mapping screen isn't empty.
+def upsert_sku_map(conn, sku, product_group_id):
+    conn.execute(text("""
+        INSERT INTO aa_sku_group_map (sku, product_group_id, updated_at)
+        VALUES (:s, :g, NOW())
+        ON CONFLICT (sku) DO UPDATE SET product_group_id = :g, updated_at = NOW()
+    """), {'s': sku, 'g': product_group_id})
 
-    mode='category' → one group per distinct skus.category (few, clean; matches
-      the spec's "ads are category groups").
-    mode='product'  → one group per product base name (the part before ' - ',
-      which merges size/colour variants); better for matching ad names, but more
-      groups.
-    Existing groups are left untouched (create_group upserts by name). Returns
-    the number of groups that now exist from this seed.
+
+def sku_map_count(conn):
+    return conn.execute(text("SELECT COUNT(*) FROM aa_sku_group_map")).scalar() or 0
+
+
+# ── Bootstrap groups + SKU rollup from the live catalog ──────────────────────
+
+def bootstrap_from_catalog(conn, mode='product'):
+    """Seed aa_product_group AND aa_sku_group_map from skus in one pass, so every
+    SKU rolls up to exactly one group (no name-match overlap, no category/SKU
+    row mixing).
+
+    mode='product'  → one group per product base name (part before ' - ', merges
+      size/colour variants). Recommended — matches how ads are named.
+    mode='category' → one group per skus.category (fewer, coarser).
+    Returns {'groups': n, 'skus_mapped': m}.
     """
-    if mode == 'product':
+    if mode == 'category':
         rows = conn.execute(text("""
-            SELECT DISTINCT trim(split_part(product_name, ' - ', 1)) AS base,
-                   MIN(category) AS category
-            FROM skus
-            WHERE is_active = TRUE AND product_name IS NOT NULL AND product_name <> ''
-            GROUP BY base
-            HAVING trim(split_part(product_name, ' - ', 1)) <> ''
+            SELECT sku, category AS grp, category FROM skus
+            WHERE is_active = TRUE AND category IS NOT NULL AND category <> ''
         """)).fetchall()
-        items = [(r._mapping['base'], r._mapping['category']) for r in rows]
     else:
         rows = conn.execute(text("""
-            SELECT category, COUNT(*) AS n FROM skus
-            WHERE is_active = TRUE AND category IS NOT NULL AND category <> ''
-            GROUP BY category ORDER BY n DESC
+            SELECT sku, trim(split_part(product_name, ' - ', 1)) AS grp, category
+            FROM skus
+            WHERE is_active = TRUE AND product_name IS NOT NULL AND product_name <> ''
+              AND trim(split_part(product_name, ' - ', 1)) <> ''
         """)).fetchall()
-        items = [(r._mapping['category'], r._mapping['category']) for r in rows]
 
-    created = 0
-    for name, category in items:
-        if not name:
+    group_ids = {}
+    skus_mapped = 0
+    for r in rows:
+        m = r._mapping
+        grp = (m['grp'] or '').strip()[:200]
+        sku = m['sku']
+        if not grp or not sku:
             continue
-        create_group(conn, name[:200], category=category)
-        created += 1
-    return created
+        if grp not in group_ids:
+            group_ids[grp] = create_group(conn, grp, category=m['category'])
+        upsert_sku_map(conn, sku, group_ids[grp])
+        skus_mapped += 1
+    conn.commit()
+    return {'groups': len(group_ids), 'skus_mapped': skus_mapped}
 
 
 # ── Unmapped ad sets (biggest first) ─────────────────────────────────────────
@@ -133,7 +148,53 @@ def unmapped_adsets(conn, since, until, limit=60):
     return out
 
 
-# ── Name-based suggester ─────────────────────────────────────────────────────
+# ── Ad-level unmapped + suggester (from aa_meta_ad_daily) ────────────────────
+
+def unmapped_ads(conn, since, until, limit=80):
+    """Ads with spend in the window not yet mapped to a group, largest first."""
+    mapped = {str(m['meta_ad_id']) for m in list_maps(conn) if m.get('meta_ad_id')}
+    rows = conn.execute(text("""
+        SELECT ad_id, MAX(ad_name) AS ad_name, MAX(adset_name) AS adset_name,
+               MAX(campaign_name) AS campaign_name, SUM(COALESCE(spend_bdt,0)) AS spend
+        FROM aa_meta_ad_daily
+        WHERE account_id = :acct AND date BETWEEN :since AND :until
+        GROUP BY ad_id ORDER BY spend DESC
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchall()
+    out = []
+    for r in rows:
+        m = r._mapping
+        if str(m['ad_id']) in mapped:
+            continue
+        out.append({'ad_id': m['ad_id'], 'ad_name': m['ad_name'],
+                    'adset_name': m['adset_name'], 'campaign_name': m['campaign_name'],
+                    'spend': float(m['spend'] or 0)})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def suggest_ads(conn, since, until):
+    """Suggest (ad -> group) by matching a group name inside the ad / ad-set /
+    campaign name. Proposals only — admin confirms (nothing is written)."""
+    groups = list_groups(conn)
+    if not groups:
+        return []
+    proposals = []
+    for a in unmapped_ads(conn, since, until):
+        hay = f"{a['ad_name'] or ''} {a['adset_name'] or ''} {a['campaign_name'] or ''}".lower()
+        best = None
+        for g in groups:
+            gname = (g['name'] or '').lower()
+            if gname and gname in hay and (best is None or len(gname) > len(best[1])):
+                best = (g, gname)
+        if best:
+            proposals.append({'ad_id': a['ad_id'], 'ad_name': a['ad_name'],
+                              'spend': a['spend'], 'product_group_id': best[0]['id'],
+                              'group_name': best[0]['name']})
+    return proposals
+
+
+# ── Name-based suggester (ad-set level, legacy) ──────────────────────────────
 
 def suggest(conn):
     """Suggest (adset -> group) links for ad sets not yet mapped, by matching a

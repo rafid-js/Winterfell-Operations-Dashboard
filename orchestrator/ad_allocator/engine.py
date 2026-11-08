@@ -45,18 +45,27 @@ def compute_group(m: dict, cfg: dict) -> dict:
     if m.get('is_clearance'):
         cogs = float(cfg['clearance_cogs_pct'])
 
+    # A group with no mapped spend has no real CPP — never invent one or a
+    # profit/action from it (§4). Break-even CPP is still meaningful (it needs
+    # only AOV), so we keep that.
+    has_spend = m.get('has_spend', True)
+
     cpp = _div(spend, orders)
     aov = _div(revenue, orders)
     margin_rate = kept * (1 - cogs)          # kept × (1 − cogs)
 
-    break_even_cpp = margin_rate * aov
-    # Clearance: no product margin, every taka of CPP is pure loss (§7).
-    profit_per_order = (-cpp) if m.get('is_clearance') else (margin_rate * aov - cpp)
-    est_profit = orders * profit_per_order
-
-    # Scale the realised profit rate to a forward 7-day window for allocation.
-    orders_per_day = _div(orders, period_days)
-    est_profit_7d = profit_per_order * orders_per_day * 7
+    break_even_cpp = 0.0 if m.get('is_clearance') else margin_rate * aov
+    if not has_spend:
+        profit_per_order = 0.0
+        est_profit = 0.0
+        est_profit_7d = 0.0
+        cpp = 0.0
+    else:
+        # Clearance: no product margin, every taka of CPP is pure loss (§7).
+        profit_per_order = (-cpp) if m.get('is_clearance') else (margin_rate * aov - cpp)
+        est_profit = orders * profit_per_order
+        orders_per_day = _div(orders, period_days)
+        est_profit_7d = profit_per_order * orders_per_day * 7
 
     # Stock cover with a short-term trend multiplier (clamped 0.5–1.5).
     units_7d = float(m.get('units_7d') or 0)
@@ -70,11 +79,11 @@ def compute_group(m: dict, cfg: dict) -> dict:
         cover_days = COVER_CAP
 
     cpp_prev = float(m.get('cpp_prev') or 0)
-    cpp_drift = (_div(cpp, cpp_prev) - 1) if cpp_prev > 0 else 0.0
+    cpp_drift = (_div(cpp, cpp_prev) - 1) if (has_spend and cpp_prev > 0) else 0.0
 
     return {
         'orders': orders, 'units': float(m.get('units') or 0), 'revenue': revenue,
-        'spend': spend, 'cpp': cpp, 'aov': aov,
+        'spend': spend, 'cpp': cpp, 'aov': aov, 'has_spend': has_spend,
         'profit_per_order': profit_per_order, 'est_profit': est_profit,
         'est_profit_7d': est_profit_7d, 'break_even_cpp': break_even_cpp,
         'cover_days': min(cover_days, COVER_CAP), 'trend': trend,
@@ -96,6 +105,10 @@ def action_label(g: dict, cfg: dict) -> tuple[str, str]:
     gap = g.get('gap', 0.0)
     gap_thr = float(cfg['gap_threshold'])
 
+    # No mapped spend → mapping is the action; never an increase/profit verdict
+    # (§4). New products are exempt: they belong in the test pool regardless.
+    if not g.get('has_spend', True) and not g.get('is_new'):
+        return 'needs_mapping', 'No spend mapped — map ads to this group'
     if not g.get('in_stock', True) or float(g.get('on_hand') or 0) <= 0:
         return 'pause', 'Out of stock'
     if g.get('is_clearance'):
@@ -130,9 +143,10 @@ def allocate(groups: list[dict], cfg: dict) -> dict:
     test_pool = total * float(cfg['test_pool_pct'])
     retarget_pool = total * float(cfg['retargeting_pool_pct'])
 
-    # Proven pool: in stock, not clearance, not new, positive forward profit.
-    proven = [g for g in groups if g.get('in_stock', True)
-              and float(g.get('on_hand') or 0) > 0
+    # Proven pool: mapped spend, in stock, not clearance, not new, positive
+    # forward profit. No-spend groups are excluded (§4).
+    proven = [g for g in groups if g.get('has_spend', True)
+              and g.get('in_stock', True) and float(g.get('on_hand') or 0) > 0
               and not g.get('is_clearance') and not g.get('is_new')
               and g['est_profit_7d'] > 0]
     weights = {}
@@ -157,8 +171,8 @@ def allocate(groups: list[dict], cfg: dict) -> dict:
         gap = rec_amount - g.get('spend_7d', 0.0)
         g_for_action = {**g, 'gap': gap}
         action, reason = action_label(g_for_action, cfg)
-        # A paused / stopped group gets no budget regardless of pool math.
-        if action in ('pause', 'cap_stop'):
+        # Paused / stopped / unmapped groups get no budget regardless of pool math.
+        if action in ('pause', 'cap_stop', 'needs_mapping'):
             rec_amount = 0.0
             gap = rec_amount - g.get('spend_7d', 0.0)
 

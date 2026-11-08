@@ -69,6 +69,36 @@ CREATE TABLE IF NOT EXISTS aa_status_map (
 );
 """
 
+# Explicit SKU -> product group rollup (replaces name-substring matching, so a
+# SKU belongs to exactly one group and category rows never mix with SKU rows).
+SKU_GROUP_MAP_SQL = """
+CREATE TABLE IF NOT EXISTS aa_sku_group_map (
+    sku              VARCHAR(200) PRIMARY KEY,
+    product_group_id INTEGER REFERENCES aa_product_group(id) ON DELETE CASCADE,
+    updated_at       TIMESTAMP DEFAULT NOW()
+);
+"""
+
+# Per-AD daily spend + purchases pulled from Meta at level=ad, so spend can be
+# attributed to groups through aa_ad_product_map (meta_ad_id).
+META_AD_DAILY_SQL = """
+CREATE TABLE IF NOT EXISTS aa_meta_ad_daily (
+    date           DATE NOT NULL,
+    account_id     VARCHAR(50),
+    ad_id          VARCHAR(50) NOT NULL,
+    ad_name        VARCHAR(300),
+    adset_id       VARCHAR(50),
+    adset_name     VARCHAR(300),
+    campaign_id    VARCHAR(50),
+    campaign_name  VARCHAR(300),
+    spend_bdt      NUMERIC(14,2),
+    purchases      INTEGER,
+    purchase_value NUMERIC(14,2),
+    updated_at     TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (date, ad_id)
+);
+"""
+
 CONFIG_SQL = """
 CREATE TABLE IF NOT EXISTS aa_config (
     key         VARCHAR(60) PRIMARY KEY,
@@ -124,9 +154,14 @@ CREATE TABLE IF NOT EXISTS aa_change_request (
 """
 
 INDEXES_SQL = [
+    "CREATE INDEX IF NOT EXISTS idx_aa_map_ad ON aa_ad_product_map(meta_ad_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_map_adset ON aa_ad_product_map(meta_adset_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_map_campaign ON aa_ad_product_map(meta_campaign_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_map_group ON aa_ad_product_map(product_group_id);",
+    "CREATE INDEX IF NOT EXISTS idx_aa_skumap_group ON aa_sku_group_map(product_group_id);",
+    "CREATE INDEX IF NOT EXISTS idx_aa_adday_ad ON aa_meta_ad_daily(ad_id);",
+    "CREATE INDEX IF NOT EXISTS idx_aa_adday_date ON aa_meta_ad_daily(date);",
+    "CREATE INDEX IF NOT EXISTS idx_aa_adday_adset ON aa_meta_ad_daily(adset_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_run_row ON aa_allocation_row(run_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_cr_status ON aa_change_request(status);",
 ]
@@ -164,6 +199,8 @@ def run():
     with get_connection() as conn:
         print("Creating aa_product_group ...");  conn.execute(text(PRODUCT_GROUP_SQL))
         print("Creating aa_ad_product_map ..."); conn.execute(text(AD_PRODUCT_MAP_SQL))
+        print("Creating aa_sku_group_map ...");  conn.execute(text(SKU_GROUP_MAP_SQL))
+        print("Creating aa_meta_ad_daily ...");  conn.execute(text(META_AD_DAILY_SQL))
         print("Creating aa_status_map ...");      conn.execute(text(STATUS_MAP_SQL))
         print("Creating aa_config ...");          conn.execute(text(CONFIG_SQL))
         print("Creating aa_allocation_run ...");  conn.execute(text(ALLOCATION_RUN_SQL))
