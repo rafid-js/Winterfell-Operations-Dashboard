@@ -3,6 +3,8 @@ WooCommerce REST API client (WC/v3).
 Reads credentials from brain/.env: WC_URL, WC_CONSUMER_KEY, WC_CONSUMER_SECRET.
 Import anywhere: from apis.woocommerce import wc
 """
+from __future__ import annotations  # PEP 604 "int | str" hints on Python 3.9
+
 import os
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed

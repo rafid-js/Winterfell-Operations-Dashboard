@@ -2,6 +2,8 @@
 Nuport OMS API client — complete endpoint coverage based on official API docs.
 Import anywhere: from apis.nuport import nuport
 """
+from __future__ import annotations  # PEP 604 "int | str" hints on Python 3.9
+
 import os
 import time
 import requests
