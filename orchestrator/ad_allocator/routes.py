@@ -27,20 +27,31 @@ def _build_overview(conn, period, mode, cfg):
     alloc = engine.allocate(groups, cfg)
 
     days = assembled['days']
-    spend = sum(g['spend'] for g in groups)
-    orders = sum(g['orders'] for g in groups)
-    units = sum(g['units'] for g in groups)
-    revenue = sum(g['revenue'] for g in groups)
-    est_profit = sum(g['est_profit'] for g in groups)
+    mapped_spend = sum(g['spend'] for g in groups)
+    unmapped = float(assembled['unmapped_spend'])
+
+    # Headline KPIs are ACCOUNT-WIDE (all counted orders + all account spend), so
+    # they stay correct regardless of how complete the ad→group mapping is. The
+    # allocation table below stays group-scoped.
+    acct = assembled.get('account') or {}
+    total_spend = float(acct.get('total_spend', mapped_spend + unmapped))
+    orders = int(acct.get('orders', sum(g['orders'] for g in groups)))
+    units = int(acct.get('units', sum(g['units'] for g in groups)))
+    revenue = float(acct.get('revenue', sum(g['revenue'] for g in groups)))
+
+    margin_rate = float(cfg['kept_rate']) * (1 - float(cfg['cogs_pct']))
+    gross_margin = margin_rate * revenue
+    est_profit = gross_margin - total_spend                       # after ads
+    after_fixed = est_profit - float(cfg['fixed_cost_per_day']) * days
 
     kpis = {
-        'ad_spend': round(spend, 2), 'orders': int(orders), 'units': int(units),
-        'revenue': round(revenue, 2),
-        'blended_cpp': round(engine._div(spend, orders), 2),
-        'roas': round(engine._div(revenue, spend), 2),
+        'ad_spend': round(total_spend, 2), 'mapped_spend': round(mapped_spend, 2),
+        'orders': orders, 'units': units, 'revenue': round(revenue, 2),
+        'blended_cpp': round(engine._div(total_spend, orders), 2),
+        'roas': round(engine._div(revenue, total_spend), 2),
         'est_profit': round(est_profit, 2),
-        'after_fixed': round(engine.net_after_fixed(groups, cfg, days), 2),
-        'unmapped_spend': assembled['unmapped_spend'],
+        'after_fixed': round(after_fixed, 2),
+        'unmapped_spend': round(unmapped, 2),
     }
     return {'kpis': kpis, 'allocation': alloc, 'pools': alloc['pools'],
             'rows': alloc['rows'], 'days': days, 'mode': mode, 'period': period,
@@ -143,6 +154,14 @@ def api_bootstrap_groups():
 def api_suggest():
     with get_connection() as conn:
         return jsonify(mapping.suggest(conn))
+
+
+@aa_bp.route('/api/ad-allocator/unmapped-adsets')
+def api_unmapped_adsets():
+    period = request.args.get('period', '30d')
+    since, until, _ = data.period_bounds(period)
+    with get_connection() as conn:
+        return jsonify(mapping.unmapped_adsets(conn, since, until))
 
 
 # ── Runs ─────────────────────────────────────────────────────────────────────

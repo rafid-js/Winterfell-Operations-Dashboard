@@ -126,6 +126,13 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
 <div class="card" style="margin-bottom:16px"><h3>70 / 20 / 10 budget split <span>· next 7 days, with guardrails</span></h3>
   <div id="pools"></div></div>
 
+<div class="card" id="unmapped-card" style="margin-bottom:16px;display:none">
+  <h3>Unmapped ad sets <span>· map these to a group to attribute their spend</span></h3>
+  <div class="tablewrap"><table id="unmapped"><thead><tr>
+    <th class="l">Ad set</th><th class="l">Campaign</th><th>Spend</th><th class="l">Map to group</th>
+  </tr></thead><tbody></tbody></table></div>
+</div>
+
 <div class="section-title">Allocation</div>
 <div class="tablewrap"><table id="alloc"><thead><tr>
   <th class="l">#</th><th class="l">Product</th><th>Units</th><th>Orders</th><th>Revenue</th>
@@ -230,7 +237,7 @@ function coverChart(el,items){
 // ---- render ----
 function renderKpis(k){
   const t=[
-    ['Ad spend',fmt(k.ad_spend),k.unmapped_spend?('৳'+fmt0(k.unmapped_spend)+' unmapped'):''],
+    ['Ad spend',fmt(k.ad_spend),fmt0(k.mapped_spend)+' mapped · '+fmt0(k.unmapped_spend)+' unmapped'],
     ['Orders',fmt0(k.orders),fmt0(k.units)+' units'],
     ['Order revenue',fmt(k.revenue),''],
     ['Blended CPP',fmt(k.blended_cpp),''],
@@ -304,7 +311,7 @@ window.reject=async id=>{await jpost(`/api/ad-allocator/changes/${id}/reject`);l
 
 // ---- events ----
 $('#periods').onclick=e=>{if(e.target.dataset.p){$$('#periods .chip').forEach(c=>c.classList.remove('on'));
-  e.target.classList.add('on');STATE.period=e.target.dataset.p;load();}};
+  e.target.classList.add('on');STATE.period=e.target.dataset.p;load();loadUnmapped();}};
 $('#rankby').onchange=e=>{STATE.rankby=e.target.value;const r=filteredRows();renderCharts(r);renderTable(r);};
 $('#stock').onchange=e=>{STATE.stock=e.target.value;const r=filteredRows();renderCharts(r);renderTable(r);};
 $('#mode').onchange=e=>{STATE.mode=e.target.value;load();};
@@ -327,11 +334,29 @@ $('#suggest').onclick=async()=>{const s=await jget('/api/ad-allocator/suggest');
   $('#suggest-list').innerHTML='<b>Suggestions</b> (click to map): '+(s.length?s.map(x=>
     `<button class="btn ghost" onclick='addMap(${x.product_group_id},"${x.adset_id}")'>${x.adset_name||x.adset_id} → ${x.group_name}</button>`).join(' '):'<span class="muted">none</span>');};
 window.addMap=async(g,a)=>{await jpost('/api/ad-allocator/maps',{product_group_id:g,meta_adset_id:a});alert('Mapped.');};
+let GROUPS=[];
+async function loadUnmapped(){
+  const [u,g]=await Promise.all([jget('/api/ad-allocator/unmapped-adsets?period='+STATE.period),jget('/api/ad-allocator/groups')]);
+  GROUPS=g;
+  const card=$('#unmapped-card');
+  if(!u.length||!g.length){card.style.display='none';return;}
+  card.style.display='';
+  const opts=g.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
+  $('#unmapped tbody').innerHTML=u.map(a=>`<tr>
+    <td class="l">${(a.adset_name||a.adset_id||'').slice(0,40)}</td>
+    <td class="l muted">${(a.campaign_name||'').slice(0,30)}</td>
+    <td class="mono">${fmt(a.spend)}</td>
+    <td class="l"><select id="u-${a.adset_id}">${opts}</select>
+      <button class="btn" onclick='mapAdset("${a.adset_id}")'>Map</button></td></tr>`).join('');
+}
+window.mapAdset=async(aid)=>{const gid=$('#u-'+aid).value;
+  await jpost('/api/ad-allocator/maps',{product_group_id:parseInt(gid),meta_adset_id:aid});
+  load();loadUnmapped();};
 async function loadGroups(){const g=await jget('/api/ad-allocator/groups');
   $('#groups-list').innerHTML='<b>Groups:</b> '+(g.length?g.map(x=>`${x.name}${x.is_new?' (new)':''}${x.is_clearance?' (clr)':''} <a onclick="delGroup(${x.id})" style="cursor:pointer">✕</a>`).join(' · '):'none yet');}
 window.delGroup=async id=>{await jdel('/api/ad-allocator/groups/'+id);loadGroups();};
 
-load(); loadGroups();
+load(); loadGroups(); loadUnmapped();
 </script>
 </div></body></html>
 """

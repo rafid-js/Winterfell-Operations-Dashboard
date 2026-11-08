@@ -119,6 +119,27 @@ def _attribute_spend(groups, mapping, spend_rows):
     return out, mapped_total
 
 
+def account_totals(conn, since, until, counted):
+    """Account-wide totals for the KPI row — all counted orders and all RAGNAR
+    spend in the window, independent of group mapping coverage."""
+    o = conn.execute(text("""
+        SELECT COUNT(*) AS lines, SUM(COALESCE(oi.quantity,0)) AS units,
+               SUM(COALESCE(oi.total_price,0)) AS revenue
+        FROM order_items oi JOIN orders o ON oi.so_number = o.so_number
+        WHERE o.order_date::date BETWEEN :since AND :until
+          AND lower(COALESCE(o.wc_status, o.nuport_status, '')) = ANY(:counted)
+    """), {'since': since, 'until': until,
+           'counted': [s.lower() for s in counted]}).fetchone()
+    s = conn.execute(text("""
+        SELECT SUM(COALESCE(spend_bdt,0)) AS spend FROM ad_spend
+        WHERE account_id = :acct AND date BETWEEN :since AND :until
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchone()
+    m = o._mapping
+    return {'orders': int(m['lines'] or 0), 'units': float(m['units'] or 0),
+            'revenue': float(m['revenue'] or 0),
+            'total_spend': float(s._mapping['spend'] or 0)}
+
+
 def assemble_live(conn, period, cfg, status_filter=None):
     since, until, days = period_bounds(period)
     p_since, p_until = since - timedelta(days=days), since - timedelta(days=1)  # prev period
@@ -166,6 +187,7 @@ def assemble_live(conn, period, cfg, status_filter=None):
     unmapped_spend = max(0.0, total_spend - mapped_total)
     return {'groups': metrics, 'days': days,
             'unmapped_spend': round(unmapped_spend, 2),
+            'account': account_totals(conn, since, until, counted),
             'since': since.isoformat(), 'until': until.isoformat()}
 
 
@@ -196,5 +218,9 @@ def assemble_sample(cfg):
                   'in_stock': on_hand > 0, 'is_new': is_new,
                   'is_clearance': is_clr, 'on_hand': on_hand})
         metrics.append(d)
+    acct = {'orders': sum(g['orders'] for g in metrics),
+            'units': sum(g['units'] for g in metrics),
+            'revenue': sum(g['revenue'] for g in metrics),
+            'total_spend': sum(g['spend'] for g in metrics) + 4200.0}
     return {'groups': metrics, 'days': 7, 'unmapped_spend': 4200.0,
-            'since': 'sample', 'until': 'sample'}
+            'account': acct, 'since': 'sample', 'until': 'sample'}

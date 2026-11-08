@@ -104,6 +104,35 @@ def bootstrap_from_catalog(conn, mode='category'):
     return created
 
 
+# ── Unmapped ad sets (biggest first) ─────────────────────────────────────────
+
+def unmapped_adsets(conn, since, until, limit=60):
+    """Ad sets with spend in the window that are NOT yet mapped to any group,
+    largest spend first — the work list for closing the unmapped-spend gap."""
+    mapped = {str(m['meta_adset_id']) for m in list_maps(conn) if m.get('meta_adset_id')}
+    rows = conn.execute(text("""
+        SELECT adset_id,
+               MAX(adset_name)    AS adset_name,
+               MAX(campaign_name) AS campaign_name,
+               SUM(COALESCE(spend_bdt,0)) AS spend
+        FROM ad_spend
+        WHERE account_id = :acct AND adset_id IS NOT NULL
+          AND date BETWEEN :since AND :until
+        GROUP BY adset_id
+        ORDER BY spend DESC
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchall()
+    out = []
+    for r in rows:
+        m = r._mapping
+        if str(m['adset_id']) in mapped:
+            continue
+        out.append({'adset_id': m['adset_id'], 'adset_name': m['adset_name'],
+                    'campaign_name': m['campaign_name'], 'spend': float(m['spend'] or 0)})
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ── Name-based suggester ─────────────────────────────────────────────────────
 
 def suggest(conn):
