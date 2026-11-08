@@ -107,6 +107,17 @@ class MetaClient:
 
         return results
 
+    def _post(self, path: str, data: dict) -> dict:
+        self._ensure_auth()
+        payload = {'access_token': self._access_token}
+        payload.update(data or {})
+        r = requests.post(f"{_BASE_URL}{path}", data=payload, timeout=30)
+        if not r.ok:
+            raise requests.HTTPError(
+                f"{r.status_code} {r.reason}: {r.text[:500]}", response=r
+            )
+        return r.json()
+
     # ── Account ───────────────────────────────────────────────────────────────
 
     def get_account_info(self) -> dict:
@@ -116,6 +127,24 @@ class MetaClient:
             f"/{self._ad_account_id}",
             {'fields': 'name,currency'},
         )
+
+    # ── Ad set reads / writes (budget push) ─────────────────────────────────────
+
+    def get_adset(self, adset_id: str) -> dict:
+        """Current budget + status for one ad set. daily_budget is minor units."""
+        return self._get(
+            f"/{adset_id}",
+            {'fields': 'name,daily_budget,status,effective_status,'
+                       'learning_stage_info,campaign{name,daily_budget}'},
+        )
+
+    def update_adset_daily_budget(self, adset_id: str, minor_units: int) -> dict:
+        """Set an ad set's daily_budget (minor units, e.g. ৳15,000 -> 1500000).
+
+        The caller is responsible for the ±20%/day guardrail and human approval;
+        this is the raw Marketing API write.
+        """
+        return self._post(f"/{adset_id}", {'daily_budget': int(minor_units)})
 
 
 def _extract_after_cursor(next_url: str) -> Optional[str]:
