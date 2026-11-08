@@ -99,6 +99,23 @@ CREATE TABLE IF NOT EXISTS aa_meta_ad_daily (
 );
 """
 
+# Per-catalog-product daily spend from Meta's product_id breakdown. retailer_id
+# is the WooCommerce variation ID, joined to skus.wc_variation_id -> group. This
+# is the primary spend attribution for catalog / Advantage+ campaigns.
+PRODUCT_SPEND_DAILY_SQL = """
+CREATE TABLE IF NOT EXISTS aa_product_spend_daily (
+    date           DATE NOT NULL,
+    account_id     VARCHAR(50),
+    retailer_id    VARCHAR(80) NOT NULL,
+    product_name   VARCHAR(300),
+    spend_bdt      NUMERIC(14,2),
+    purchases      INTEGER,
+    purchase_value NUMERIC(14,2),
+    updated_at     TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (date, retailer_id)
+);
+"""
+
 CONFIG_SQL = """
 CREATE TABLE IF NOT EXISTS aa_config (
     key         VARCHAR(60) PRIMARY KEY,
@@ -162,6 +179,8 @@ INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_aa_adday_ad ON aa_meta_ad_daily(ad_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_adday_date ON aa_meta_ad_daily(date);",
     "CREATE INDEX IF NOT EXISTS idx_aa_adday_adset ON aa_meta_ad_daily(adset_id);",
+    "CREATE INDEX IF NOT EXISTS idx_aa_prodspend_rid ON aa_product_spend_daily(retailer_id);",
+    "CREATE INDEX IF NOT EXISTS idx_aa_prodspend_date ON aa_product_spend_daily(date);",
     "CREATE INDEX IF NOT EXISTS idx_aa_run_row ON aa_allocation_row(run_id);",
     "CREATE INDEX IF NOT EXISTS idx_aa_cr_status ON aa_change_request(status);",
 ]
@@ -201,6 +220,7 @@ def run():
         print("Creating aa_ad_product_map ..."); conn.execute(text(AD_PRODUCT_MAP_SQL))
         print("Creating aa_sku_group_map ...");  conn.execute(text(SKU_GROUP_MAP_SQL))
         print("Creating aa_meta_ad_daily ...");  conn.execute(text(META_AD_DAILY_SQL))
+        print("Creating aa_product_spend_daily ..."); conn.execute(text(PRODUCT_SPEND_DAILY_SQL))
         print("Creating aa_status_map ...");      conn.execute(text(STATUS_MAP_SQL))
         print("Creating aa_config ...");          conn.execute(text(CONFIG_SQL))
         print("Creating aa_allocation_run ...");  conn.execute(text(ALLOCATION_RUN_SQL))

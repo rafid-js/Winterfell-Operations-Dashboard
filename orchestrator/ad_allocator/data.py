@@ -81,6 +81,29 @@ def _stock_by_group(conn):
 
 # ── Spend attribution: per-AD (preferred) with adset-level fallback ──────────
 
+def _product_spend_window(conn, since, until):
+    """Primary attribution: per-catalog-product spend joined retailer_id ->
+    skus.wc_variation_id -> sku -> group. Returns (by_group, mapped, total) or
+    None when no product spend has been synced for the window (so the caller
+    falls back to ad/adset-level)."""
+    total = conn.execute(text("""
+        SELECT SUM(COALESCE(spend_bdt,0)) FROM aa_product_spend_daily
+        WHERE account_id = :acct AND date BETWEEN :since AND :until
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).scalar()
+    if total is None:
+        return None
+    rows = conn.execute(text("""
+        SELECT m.product_group_id AS gid, SUM(COALESCE(ps.spend_bdt,0)) AS spend
+        FROM aa_product_spend_daily ps
+        JOIN skus s ON s.wc_variation_id::text = ps.retailer_id
+        JOIN aa_sku_group_map m ON m.sku = s.sku
+        WHERE ps.account_id = :acct AND ps.date BETWEEN :since AND :until
+        GROUP BY m.product_group_id
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchall()
+    by = {r._mapping['gid']: float(r._mapping['spend'] or 0) for r in rows}
+    return by, sum(by.values()), float(total)
+
+
 def _ad_spend_rows(conn, since, until):
     """Per-ad spend rows from aa_meta_ad_daily if synced, else None."""
     rows = conn.execute(text("""
@@ -212,13 +235,17 @@ def assemble_live(conn, period, cfg, status_filter=None):
     ord_pr = _orders_by_group(conn, p_since, p_until, counted)
     stock = _stock_by_group(conn)
 
-    # Spend attributed per-ad (preferred) with adset-level fallback.
-    spend_by_g, mapped_total, total_spend = _attribute_spend(
-        groups, mapping, _ad_spend_rows(conn, since, until), _spend_by_key(conn, since, until))
-    spend7_by_g, _, _ = _attribute_spend(
-        groups, mapping, _ad_spend_rows(conn, w_since, until), _spend_by_key(conn, w_since, until))
-    spendp_by_g, _, _ = _attribute_spend(
-        groups, mapping, _ad_spend_rows(conn, p_since, p_until), _spend_by_key(conn, p_since, p_until))
+    # Spend: prefer per-product attribution (catalog retailer_id -> wc_variation_id
+    # -> sku -> group). Fall back to ad/adset-level only if no product spend synced.
+    def _spend_window(s, u):
+        ps = _product_spend_window(conn, s, u)
+        if ps is not None:
+            return ps
+        return _attribute_spend(groups, mapping, _ad_spend_rows(conn, s, u), _spend_by_key(conn, s, u))
+
+    spend_by_g, mapped_total, total_spend = _spend_window(since, until)
+    spend7_by_g = _spend_window(w_since, until)[0]
+    spendp_by_g = _spend_window(p_since, p_until)[0]
 
     metrics = []
     for g in groups:
@@ -292,46 +319,46 @@ def assemble_sample(cfg):
             'account': acct, 'since': 'sample', 'until': 'sample'}
 
 
-# ── Ads tab: per-ad view with verdict ────────────────────────────────────────
+# ── Products tab: per-catalog-product view with verdict ──────────────────────
 
 def ads_view(conn, period, cfg):
-    """Per-ad rows: spend, Meta purchases, ad CPP, mapped group, that group's
-    break-even CPP, and a verdict (scale / cut / wait)."""
+    """Per-catalog-product rows: spend, Meta purchases, product CPP, the group it
+    resolves to (via retailer_id -> wc_variation_id -> sku -> group), that group's
+    break-even CPP, and a verdict (scale / cut / wait). Products that don't
+    resolve to a brain SKU (e.g. ragnarbd.com items) show no group."""
     since, until, days = period_bounds(period)
     counted = config_store.counted_slugs(conn)
     min_days = int(cfg['min_days_data'])
 
-    # ad -> group from the mapping (ad level only here)
-    ad_map = {str(r._mapping['meta_ad_id']): r._mapping['product_group_id']
-              for r in conn.execute(text(
-                  "SELECT meta_ad_id, product_group_id FROM aa_ad_product_map "
-                  "WHERE meta_ad_id IS NOT NULL")).fetchall()}
-
-    # group break-even CPP = 0.275 × AOV (clearance 0), from mapped orders
-    ord_g = _orders_by_group(conn, since, until, counted)
     gmeta = {r._mapping['id']: dict(r._mapping) for r in conn.execute(text(
         "SELECT id, name, is_clearance FROM aa_product_group")).fetchall()}
     margin_rate = float(cfg['kept_rate']) * (1 - float(cfg['cogs_pct']))
+    ord_g = _orders_by_group(conn, since, until, counted)
     be_by_group = {}
     for gid, o in ord_g.items():
         aov = (o['revenue'] / o['orders']) if o['orders'] else 0
-        be = 0.0 if (gmeta.get(gid) or {}).get('is_clearance') else margin_rate * aov
-        be_by_group[gid] = be
+        be_by_group[gid] = 0.0 if (gmeta.get(gid) or {}).get('is_clearance') else margin_rate * aov
 
+    # Per product, resolving to a group through the variation-id join.
     rows = conn.execute(text("""
-        SELECT ad_id, MAX(ad_name) AS ad_name, MAX(adset_name) AS adset_name,
-               SUM(COALESCE(spend_bdt,0)) AS spend, SUM(COALESCE(purchases,0)) AS purchases,
-               COUNT(DISTINCT date) AS ndays
-        FROM aa_meta_ad_daily
-        WHERE account_id = :acct AND date BETWEEN :since AND :until
-        GROUP BY ad_id ORDER BY spend DESC
+        SELECT ps.retailer_id,
+               MAX(ps.product_name)          AS product_name,
+               SUM(COALESCE(ps.spend_bdt,0)) AS spend,
+               SUM(COALESCE(ps.purchases,0)) AS purchases,
+               COUNT(DISTINCT ps.date)       AS ndays,
+               MAX(m.product_group_id)       AS gid
+        FROM aa_product_spend_daily ps
+        LEFT JOIN skus s ON s.wc_variation_id::text = ps.retailer_id
+        LEFT JOIN aa_sku_group_map m ON m.sku = s.sku
+        WHERE ps.account_id = :acct AND ps.date BETWEEN :since AND :until
+        GROUP BY ps.retailer_id ORDER BY spend DESC
     """), {'acct': RAGNAR_ACCOUNT_ID, 'since': since, 'until': until}).fetchall()
 
     out = []
     for r in rows:
         m = r._mapping
         spend, purch = float(m['spend'] or 0), int(m['purchases'] or 0)
-        gid = ad_map.get(str(m['ad_id']))
+        gid = m['gid']
         cpp = (spend / purch) if purch else None
         be = be_by_group.get(gid)
         if int(m['ndays'] or 0) < min_days:
@@ -344,7 +371,7 @@ def ads_view(conn, period, cfg):
             verdict = 'cut'
         else:
             verdict = 'review'
-        out.append({'ad_id': m['ad_id'], 'ad_name': m['ad_name'], 'adset_name': m['adset_name'],
+        out.append({'retailer_id': m['retailer_id'], 'product_name': m['product_name'],
                     'spend': round(spend, 2), 'purchases': purch,
                     'cpp': round(cpp, 2) if cpp is not None else None,
                     'group_id': gid, 'group_name': (gmeta.get(gid) or {}).get('name'),

@@ -154,11 +154,12 @@ def api_bootstrap_groups():
 
 @aa_bp.route('/api/ad-allocator/sync-ads', methods=['POST'])
 def api_sync_ads():
+    """Sync per-product Meta spend (catalog product_id breakdown) — the primary
+    attribution source. Name kept for the existing UI button."""
     days = (request.get_json(silent=True) or {}).get('days', 30)
-    from . import ad_sync
+    from . import product_sync
     try:
-        res = ad_sync.run(days)
-        return jsonify(res)
+        return jsonify(product_sync.run(days))
     except Exception as e:  # noqa: BLE001
         return jsonify({'error': str(e)}), 500
 

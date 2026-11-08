@@ -124,7 +124,7 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
 
 <div class="tabs">
   <button class="tab on" data-tab="alloc">Allocation</button>
-  <button class="tab" data-tab="ads">Ads</button>
+  <button class="tab" data-tab="ads">Products</button>
 </div>
 
 <div id="view-alloc">
@@ -152,13 +152,6 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
 
 <div class="card" style="margin-bottom:16px"><h3>70 / 20 / 10 budget split <span>· next 7 days, with guardrails</span></h3>
   <div id="pools"></div></div>
-
-<div class="card" id="unmapped-card" style="margin-bottom:16px;display:none">
-  <h3>Unmapped ad sets <span>· map these to a group to attribute their spend</span></h3>
-  <div class="tablewrap"><table id="unmapped"><thead><tr>
-    <th class="l">Ad set</th><th class="l">Campaign</th><th>Spend</th><th class="l">Map to group</th>
-  </tr></thead><tbody></tbody></table></div>
-</div>
 
 <div class="section-title">Allocation</div>
 <div class="tablewrap"><table id="alloc"><thead><tr>
@@ -193,28 +186,22 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
     <span class="muted">Bootstrap from catalog:</span>
     <button class="btn ghost" id="boot-prod">By product (recommended)</button>
     <button class="btn ghost" id="boot-cat">By category</button>
-    <button class="btn ghost" id="sync-ads">Sync Meta ads</button>
-    <button class="btn ghost" id="suggest">Suggest ad → group</button>
+    <button class="btn ghost" id="sync-ads">Sync Meta spend</button>
   </div>
+  <div class="muted" style="font-size:.74rem;margin-top:4px">Spend attributes automatically: catalog product → WC variation ID → SKU → group. No manual ad mapping needed.</div>
   <div id="groups-list" class="muted" style="font-size:.78rem"></div>
   <div id="suggest-list" style="font-size:.78rem;margin-top:8px"></div>
 </details>
 </div><!-- /view-alloc -->
 
 <div id="view-ads" style="display:none">
-  <div id="unmapped-ads-card" class="card" style="margin-bottom:12px;display:none">
-    <h3>Unmapped ads <span>· map to attribute spend</span></h3>
-    <div class="tablewrap"><table id="unmapped-ads"><thead><tr>
-      <th class="l">Ad</th><th class="l">Ad set</th><th>Spend</th><th class="l">Map to group</th>
-    </tr></thead><tbody></tbody></table></div>
-  </div>
-  <div class="card"><h3>Ads <span>· per-ad spend, purchases, CPP vs break-even, verdict</span></h3>
+  <div class="card"><h3>Products <span>· per catalog product: spend, purchases, CPP vs break-even, verdict</span></h3>
     <div class="tablewrap"><table id="ads"><thead><tr>
-      <th class="l">Ad</th><th class="l">Group</th><th>Spend</th><th>Purchases</th>
-      <th>Ad CPP</th><th>Break-even</th><th>Days</th><th class="l">Verdict</th>
+      <th class="l">Product</th><th class="l">Group</th><th>Spend</th><th>Purchases</th>
+      <th>CPP</th><th>Break-even</th><th>Days</th><th class="l">Verdict</th>
     </tr></thead><tbody></tbody></table></div>
     <div class="muted" id="ads-empty" style="padding:12px;display:none">
-      No ad-level data yet — click <b>Sync Meta ads</b> in the Allocation tab's mapping admin.</div>
+      No product spend synced yet — click <b>Sync Meta spend</b> in the Allocation tab's mapping admin.</div>
   </div>
 </div>
 
@@ -421,36 +408,25 @@ async function load(){
   renderKpis(d.kpis);
   const b=$('#unmapped-banner');
   if(d.unmapped_spend>0){b.style.display='block';
-    b.innerHTML=`⚠ <b>${fmt(d.unmapped_spend)}</b> of ad spend is unmapped (of ${fmt(d.total_ad_spend)} total). Map ads to product groups so spend attributes — open the <b>Ads</b> tab or the mapping admin below.`;}
+    b.innerHTML=`⚠ <b>${fmt(d.unmapped_spend)}</b> of ad spend is unmatched (of ${fmt(d.total_ad_spend)} total) — catalog products not resolving to a Winterfell SKU (ragnarbd.com items, or SKUs missing a WC variation ID). Run the WooCommerce product sync to backfill variation IDs. See the <b>Products</b> tab.`;}
   else b.style.display='none';
   const rows=filteredRows(); renderCharts(rows); renderPools(d.pools); renderTable(rows);
 }
 const verdictPill={scale:'scale',cut:'cut',wait:'wait',review:'review'};
 async function loadAds(){
-  const [d,un]=await Promise.all([jget('/api/ad-allocator/ads?period='+STATE.period),jget('/api/ad-allocator/unmapped-ads?period='+STATE.period)]);
+  const d=await jget('/api/ad-allocator/ads?period='+STATE.period);
   const ads=d.ads||[];
   $('#ads-empty').style.display=ads.length?'none':'block';
   $('#ads tbody').innerHTML=ads.map(a=>`<tr>
-    <td class="l">${(a.ad_name||a.ad_id||'').slice(0,34)}</td>
-    <td class="l ${a.group_name?'':'muted'}">${a.group_name||'unmapped'}</td>
+    <td class="l">${(a.product_name||a.retailer_id||'').slice(0,34)}</td>
+    <td class="l ${a.group_name?'':'muted'}">${a.group_name||'unmatched'}</td>
     <td class="mono">${fmt(a.spend)}</td><td class="mono">${a.purchases}</td>
     <td class="mono">${a.cpp==null?'<span class="muted">—</span>':fmt(a.cpp)}</td>
     <td class="mono">${a.break_even_cpp==null?'<span class="muted">—</span>':fmt(a.break_even_cpp)}</td>
     <td class="mono">${a.ndays}</td>
     <td class="l"><span class="pill ${verdictPill[a.verdict]||'review'}">${a.verdict}</span></td></tr>`).join('')
-    ||'<tr><td colspan=8 class="muted">No ads.</td></tr>';
-  const card=$('#unmapped-ads-card'), g=GROUPS.length?GROUPS:await jget('/api/ad-allocator/groups');GROUPS=g;
-  if(un.length&&g.length){card.style.display='';
-    const opts=g.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
-    $('#unmapped-ads tbody').innerHTML=un.map(a=>`<tr>
-      <td class="l">${(a.ad_name||a.ad_id||'').slice(0,34)}</td><td class="l muted">${(a.adset_name||'').slice(0,24)}</td>
-      <td class="mono">${fmt(a.spend)}</td>
-      <td class="l"><select id="ua-${a.ad_id}">${opts}</select>
-        <button class="btn" onclick='mapAd("${a.ad_id}")'>Map</button></td></tr>`).join('');
-  } else card.style.display='none';
+    ||'<tr><td colspan=8 class="muted">No products.</td></tr>';
 }
-window.mapAd=async(aid)=>{const gid=$('#ua-'+aid).value;
-  await jpost('/api/ad-allocator/maps',{product_group_id:parseInt(gid),meta_ad_id:aid});loadAds();load();};
 async function loadChanges(){
   if(!STATE.runId){$('#changes tbody').innerHTML='';return;}
   const cr=await jget('/api/ad-allocator/changes?run_id='+STATE.runId);
@@ -465,7 +441,7 @@ window.reject=async id=>{await jpost(`/api/ad-allocator/changes/${id}/reject`);l
 
 // ---- events ----
 $('#periods').onclick=e=>{if(e.target.dataset.p){$$('#periods .chip').forEach(c=>c.classList.remove('on'));
-  e.target.classList.add('on');STATE.period=e.target.dataset.p;load();loadUnmapped();}};
+  e.target.classList.add('on');STATE.period=e.target.dataset.p;load();}};
 $('#rankby').onchange=e=>{STATE.rankby=e.target.value;const r=filteredRows();renderCharts(r);renderTable(r);};
 $('#stock').onchange=e=>{STATE.stock=e.target.value;const r=filteredRows();renderCharts(r);renderTable(r);};
 $('#mode').onchange=e=>{STATE.mode=e.target.value;load();};
@@ -485,40 +461,19 @@ $$('.tab').forEach(t=>t.onclick=()=>{$$('.tab').forEach(x=>x.classList.remove('o
   const ads=t.dataset.tab==='ads';$('#view-alloc').style.display=ads?'none':'';$('#view-ads').style.display=ads?'':'none';
   if(ads)loadAds();});
 async function boot(mode){const r=await jpost('/api/ad-allocator/bootstrap-groups',{mode});
-  alert(`Created ${r.groups} groups, mapped ${r.skus_mapped} SKUs (${r.mode}). Now Sync Meta ads, then Suggest ad → group.`);loadGroups();load();}
+  alert(`Created ${r.groups} groups, mapped ${r.skus_mapped} SKUs (${r.mode}). Now click Sync Meta spend.`);loadGroups();load();}
 $('#boot-cat').onclick=()=>boot('category');
 $('#boot-prod').onclick=()=>boot('product');
 $('#sync-ads').onclick=async()=>{$('#sync-ads').textContent='Syncing…';
   const r=await jpost('/api/ad-allocator/sync-ads',{days:30});
-  $('#sync-ads').textContent='Sync Meta ads';
-  alert(r.error?('Sync failed: '+r.error):`Synced ${r.rows} ad-day rows (${r.since} → ${r.until}).`);load();loadUnmapped();};
-$('#suggest').onclick=async()=>{const s=await jget('/api/ad-allocator/suggest-ads?period='+STATE.period);
-  $('#suggest-list').innerHTML='<b>Ad → group suggestions</b> (click to map): '+(s.length?s.map(x=>
-    `<button class="btn ghost" onclick='addMap(${x.product_group_id},"${x.ad_id}")'>${(x.ad_name||x.ad_id).slice(0,24)} → ${x.group_name}</button>`).join(' '):'<span class="muted">none — sync Meta ads first</span>');};
-window.addMap=async(g,a)=>{await jpost('/api/ad-allocator/maps',{product_group_id:g,meta_ad_id:a});load();loadAds();};
+  $('#sync-ads').textContent='Sync Meta spend';
+  alert(r.error?('Sync failed: '+r.error):`Synced ${r.rows} product-day rows (${r.since} → ${r.until}).`);load();loadAds();};
 let GROUPS=[];
-async function loadUnmapped(){
-  const [u,g]=await Promise.all([jget('/api/ad-allocator/unmapped-adsets?period='+STATE.period),jget('/api/ad-allocator/groups')]);
-  GROUPS=g;
-  const card=$('#unmapped-card');
-  if(!u.length||!g.length){card.style.display='none';return;}
-  card.style.display='';
-  const opts=g.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
-  $('#unmapped tbody').innerHTML=u.map(a=>`<tr>
-    <td class="l">${(a.adset_name||a.adset_id||'').slice(0,40)}</td>
-    <td class="l muted">${(a.campaign_name||'').slice(0,30)}</td>
-    <td class="mono">${fmt(a.spend)}</td>
-    <td class="l"><select id="u-${a.adset_id}">${opts}</select>
-      <button class="btn" onclick='mapAdset("${a.adset_id}")'>Map</button></td></tr>`).join('');
-}
-window.mapAdset=async(aid)=>{const gid=$('#u-'+aid).value;
-  await jpost('/api/ad-allocator/maps',{product_group_id:parseInt(gid),meta_adset_id:aid});
-  load();loadUnmapped();};
 async function loadGroups(){const g=await jget('/api/ad-allocator/groups');
   $('#groups-list').innerHTML='<b>Groups:</b> '+(g.length?g.map(x=>`${x.name}${x.is_new?' (new)':''}${x.is_clearance?' (clr)':''} <a onclick="delGroup(${x.id})" style="cursor:pointer">✕</a>`).join(' · '):'none yet');}
 window.delGroup=async id=>{await jdel('/api/ad-allocator/groups/'+id);loadGroups();};
 
-load(); loadGroups(); loadUnmapped(); loadSeries();
+load(); loadGroups(); loadSeries();
 </script>
 </div></body></html>
 """

@@ -193,6 +193,16 @@ UPDATE_SKU_IMAGE = text("""
     WHERE sku = :sku AND (image_url IS NULL OR image_url != :image_url)
 """)
 
+# Store WooCommerce product + variation IDs on each SKU row. The variation ID is
+# the Meta catalog's retailer_id, so this is the join key for the Ad Allocator's
+# per-product spend attribution. Runs regardless of image changes (backfill).
+UPDATE_SKU_WC_IDS = text("""
+    UPDATE skus SET wc_product_id   = :wc_product_id,
+                    wc_variation_id = COALESCE(:wc_variation_id, wc_variation_id),
+                    updated_at = NOW()
+    WHERE sku = :sku
+""")
+
 UPDATE_WC_FIELDS = text("""
     UPDATE orders SET
         wc_order_id     = :wc_id,
@@ -320,13 +330,19 @@ def sync_products():
             images = p.get('images') or []
             image_url = images[0].get('src') if images else None
 
-            if sku and image_url:
-                conn.execute(UPDATE_SKU_IMAGE, {
-                    'sku': sku,
-                    'image_url': image_url,
-                    'wc_product_id': p.get('id'),
+            if sku:
+                if image_url:
+                    conn.execute(UPDATE_SKU_IMAGE, {
+                        'sku': sku, 'image_url': image_url, 'wc_product_id': p.get('id'),
+                    })
+                    ok += 1
+                else:
+                    skip += 1
+                # Simple product: the product ID is both product and variation key.
+                conn.execute(UPDATE_SKU_WC_IDS, {
+                    'sku': sku, 'wc_product_id': p.get('id'),
+                    'wc_variation_id': p.get('id'),
                 })
-                ok += 1
             else:
                 skip += 1
 
@@ -335,13 +351,18 @@ def sync_products():
                 var_sku = (var.get('sku') or '').strip()
                 var_imgs = var.get('images') or []
                 var_img = var_imgs[0].get('src') if var_imgs else image_url
-                if var_sku and var_img:
+                if not var_sku:
+                    continue
+                if var_img:
                     conn.execute(UPDATE_SKU_IMAGE, {
-                        'sku': var_sku,
-                        'image_url': var_img,
-                        'wc_product_id': p.get('id'),
+                        'sku': var_sku, 'image_url': var_img, 'wc_product_id': p.get('id'),
                     })
                     ok += 1
+                # The variation's WC ID is the Meta catalog retailer_id.
+                conn.execute(UPDATE_SKU_WC_IDS, {
+                    'sku': var_sku, 'wc_product_id': p.get('id'),
+                    'wc_variation_id': var.get('id'),
+                })
 
         conn.commit()
 

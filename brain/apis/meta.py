@@ -144,6 +144,33 @@ class MetaClient:
             params['after'] = after
         return results
 
+    def get_product_insights(self, since: str, until: str) -> list:
+        """Daily account insights broken down by catalog product. For catalog /
+        Advantage+ campaigns this attributes spend + purchases per product. Each
+        row's product_id is formatted '<retailer_id>, <product name>'."""
+        params = {
+            'fields': 'spend,actions,action_values',
+            'level': 'account',
+            'breakdowns': 'product_id',
+            'time_increment': 1,
+            'time_range': f'{{"since":"{since}","until":"{until}"}}',
+            'limit': 500,
+        }
+        self._ensure_auth()
+        path = f"/{self._ad_account_id}/insights"
+        results = []
+        while True:
+            data = self._get(path, params)
+            results.extend(data.get('data', []))
+            next_url = (data.get('paging') or {}).get('next')
+            if not next_url:
+                break
+            after = _extract_after_cursor(next_url)
+            if not after:
+                break
+            params['after'] = after
+        return results
+
     # ── Account ───────────────────────────────────────────────────────────────
 
     def get_account_info(self) -> dict:
