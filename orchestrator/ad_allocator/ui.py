@@ -113,6 +113,11 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
 <div class="kpis" id="kpis"></div>
 
 <div class="grid">
+  <div class="card"><h3>ROAS trend <span>· monthly, account-wide</span></h3><div id="c-roas"></div></div>
+  <div class="card"><h3>Cost per conversion <span>· monthly ৳/order</span></h3><div id="c-cpc"></div></div>
+</div>
+
+<div class="grid">
   <div class="card"><h3>Product ranking <span>· loss-makers in orange</span></h3><div id="c-rank"></div></div>
   <div class="card"><h3>Actual vs recommended spend share</h3><div id="c-share"></div>
     <div class="legend"><span><i style="background:var(--mut2)"></i>Actual</span>
@@ -232,6 +237,42 @@ function coverChart(el,items){
     s+=`<text x="${150+c/cap*bw+4}" y="${y+13}" fill="#c3cdd8" font-size="9">${it.cover_days>=999?'∞':Math.round(it.cover_days)+'d'}</text>`;
   });
   el.innerHTML=s+'</svg>';
+}
+
+function monthLbl(m){const [y,mo]=m.split('-');return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+mo-1]+' '+y.slice(2);}
+function lineChart(el,series,key,unit,color){
+  const W=520,H=210,pL=44,pR=12,pT=14,pB=28,iw=W-pL-pR,ih=H-pT-pB;
+  const vals=series.map(s=>s[key]||0),max=Math.max(1,...vals),n=series.length;
+  const x=i=>pL+(n<=1?iw/2:i/(n-1)*iw), y=v=>pT+ih-(v/max)*ih;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  for(let g=0;g<=4;g++){const gy=pT+ih-g/4*ih,gv=(max*g/4);
+    s+=`<line x1="${pL}" y1="${gy}" x2="${W-pR}" y2="${gy}" stroke="#262d38"/>`;
+    s+=`<text x="${pL-6}" y="${gy+3}" text-anchor="end" fill="#7b8696" font-size="9">${unit?unit(gv):Math.round(gv)}</text>`;}
+  let d='';series.forEach((p,i)=>{d+=(i?'L':'M')+x(i)+' '+y(p[key]||0)+' ';});
+  s+=`<path d="${d}" fill="none" stroke="${color}" stroke-width="2"/>`;
+  series.forEach((p,i)=>{s+=`<circle cx="${x(i)}" cy="${y(p[key]||0)}" r="3" fill="${color}"/>`;
+    s+=`<text x="${x(i)}" y="${y(p[key]||0)-7}" text-anchor="middle" fill="#c3cdd8" font-size="9">${(p[key]||0).toFixed(unit?0:2)}${unit?'':'×'}</text>`;
+    s+=`<text x="${x(i)}" y="${H-10}" text-anchor="middle" fill="#7b8696" font-size="8.5">${monthLbl(p.month)}</text>`;});
+  el.innerHTML=s+'</svg>';
+}
+function monthlyBars(el,series,key,color,unit){
+  const W=520,H=210,pL=44,pR=12,pT=14,pB=28,iw=W-pL-pR,ih=H-pT-pB;
+  const vals=series.map(s=>s[key]||0),max=Math.max(1,...vals),n=series.length,bw=iw/n*0.62;
+  let s=`<svg viewBox="0 0 ${W} ${H}">`;
+  for(let g=0;g<=4;g++){const gy=pT+ih-g/4*ih;
+    s+=`<line x1="${pL}" y1="${gy}" x2="${W-pR}" y2="${gy}" stroke="#262d38"/>`;
+    s+=`<text x="${pL-6}" y="${gy+3}" text-anchor="end" fill="#7b8696" font-size="9">${unit?unit(max*g/4):Math.round(max*g/4)}</text>`;}
+  series.forEach((p,i)=>{const v=p[key]||0,bh=v/max*ih,cx=pL+(i+0.5)/n*iw;
+    s+=`<rect x="${cx-bw/2}" y="${pT+ih-bh}" width="${bw}" height="${bh}" rx="3" fill="${color}"/>`;
+    s+=`<text x="${cx}" y="${pT+ih-bh-4}" text-anchor="middle" fill="#c3cdd8" font-size="8.5">${Math.round(v)}</text>`;
+    s+=`<text x="${cx}" y="${H-10}" text-anchor="middle" fill="#7b8696" font-size="8.5">${monthLbl(p.month)}</text>`;});
+  el.innerHTML=s+'</svg>';
+}
+async function loadSeries(){
+  const s=await jget('/api/ad-allocator/timeseries?months=7');
+  if(!s||!s.length){$('#c-roas').innerHTML='<div class="muted" style="padding:20px">No monthly data yet.</div>';return;}
+  lineChart($('#c-roas'),s,'roas',null,'#8b7bff');
+  monthlyBars($('#c-cpc'),s,'cpc','#6aa8ff',v=>'৳'+Math.round(v));
 }
 
 // ---- render ----
@@ -356,7 +397,7 @@ async function loadGroups(){const g=await jget('/api/ad-allocator/groups');
   $('#groups-list').innerHTML='<b>Groups:</b> '+(g.length?g.map(x=>`${x.name}${x.is_new?' (new)':''}${x.is_clearance?' (clr)':''} <a onclick="delGroup(${x.id})" style="cursor:pointer">✕</a>`).join(' · '):'none yet');}
 window.delGroup=async id=>{await jdel('/api/ad-allocator/groups/'+id);loadGroups();};
 
-load(); loadGroups(); loadUnmapped();
+load(); loadGroups(); loadUnmapped(); loadSeries();
 </script>
 </div></body></html>
 """

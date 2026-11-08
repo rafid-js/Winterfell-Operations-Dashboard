@@ -140,6 +140,55 @@ def account_totals(conn, since, until, counted):
             'total_spend': float(s._mapping['spend'] or 0)}
 
 
+def monthly_series(conn, counted, months=7):
+    """Monthly account-wide ROAS and cost-per-conversion for the trend charts.
+
+    ROAS = counted-order revenue / RAGNAR spend; CPC (cost per conversion) =
+    spend / orders. Returns a continuous list of the last `months` months.
+    """
+    spend = conn.execute(text("""
+        SELECT to_char(date_trunc('month', date), 'YYYY-MM') AS m,
+               SUM(COALESCE(spend_bdt,0)) AS spend
+        FROM ad_spend
+        WHERE account_id = :acct AND date >= (date_trunc('month', CURRENT_DATE)
+              - ((:months - 1) || ' months')::interval)
+        GROUP BY 1
+    """), {'acct': RAGNAR_ACCOUNT_ID, 'months': months}).fetchall()
+    orders = conn.execute(text("""
+        SELECT to_char(date_trunc('month', o.order_date), 'YYYY-MM') AS m,
+               COUNT(*) AS orders, SUM(COALESCE(oi.total_price,0)) AS revenue
+        FROM order_items oi JOIN orders o ON oi.so_number = o.so_number
+        WHERE o.order_date >= (date_trunc('month', CURRENT_DATE)
+              - ((:months - 1) || ' months')::interval)
+          AND lower(COALESCE(o.wc_status, o.nuport_status, '')) = ANY(:counted)
+        GROUP BY 1
+    """), {'months': months, 'counted': [s.lower() for s in counted]}).fetchall()
+
+    s_by = {r._mapping['m']: float(r._mapping['spend'] or 0) for r in spend}
+    o_by = {r._mapping['m']: (int(r._mapping['orders'] or 0), float(r._mapping['revenue'] or 0))
+            for r in orders}
+
+    today = date.today()
+    keys = []
+    y, mo = today.year, today.month
+    for _ in range(months):
+        keys.append(f'{y:04d}-{mo:02d}')
+        mo -= 1
+        if mo == 0:
+            mo = 12; y -= 1
+    keys.reverse()
+
+    out = []
+    for k in keys:
+        sp = s_by.get(k, 0.0)
+        od, rev = o_by.get(k, (0, 0.0))
+        out.append({'month': k, 'spend': round(sp, 2), 'orders': od,
+                    'revenue': round(rev, 2),
+                    'roas': round(rev / sp, 2) if sp else 0.0,
+                    'cpc': round(sp / od, 2) if od else 0.0})
+    return out
+
+
 def assemble_live(conn, period, cfg, status_filter=None):
     since, until, days = period_bounds(period)
     p_since, p_until = since - timedelta(days=days), since - timedelta(days=1)  # prev period

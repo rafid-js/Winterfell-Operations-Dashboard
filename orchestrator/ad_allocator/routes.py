@@ -156,6 +156,18 @@ def api_suggest():
         return jsonify(mapping.suggest(conn))
 
 
+@aa_bp.route('/api/ad-allocator/timeseries')
+def api_timeseries():
+    months = request.args.get('months', 7, type=int)
+    with get_connection() as conn:
+        counted = config_store.counted_slugs(conn)
+        try:
+            return jsonify(data.monthly_series(conn, counted, months))
+        except Exception as e:  # noqa: BLE001
+            print(f'  ⚠ timeseries failed: {e}', flush=True)
+            return jsonify([])
+
+
 @aa_bp.route('/api/ad-allocator/unmapped-adsets')
 def api_unmapped_adsets():
     period = request.args.get('period', '30d')
