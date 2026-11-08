@@ -64,6 +64,46 @@ def delete_map(conn, map_id):
     conn.commit()
 
 
+# ── Bootstrap groups from the live catalog ───────────────────────────────────
+
+def bootstrap_from_catalog(conn, mode='category'):
+    """Seed aa_product_group from skus so the mapping screen isn't empty.
+
+    mode='category' → one group per distinct skus.category (few, clean; matches
+      the spec's "ads are category groups").
+    mode='product'  → one group per product base name (the part before ' - ',
+      which merges size/colour variants); better for matching ad names, but more
+      groups.
+    Existing groups are left untouched (create_group upserts by name). Returns
+    the number of groups that now exist from this seed.
+    """
+    if mode == 'product':
+        rows = conn.execute(text("""
+            SELECT DISTINCT trim(split_part(product_name, ' - ', 1)) AS base,
+                   MIN(category) AS category
+            FROM skus
+            WHERE is_active = TRUE AND product_name IS NOT NULL AND product_name <> ''
+            GROUP BY base
+            HAVING trim(split_part(product_name, ' - ', 1)) <> ''
+        """)).fetchall()
+        items = [(r._mapping['base'], r._mapping['category']) for r in rows]
+    else:
+        rows = conn.execute(text("""
+            SELECT category, COUNT(*) AS n FROM skus
+            WHERE is_active = TRUE AND category IS NOT NULL AND category <> ''
+            GROUP BY category ORDER BY n DESC
+        """)).fetchall()
+        items = [(r._mapping['category'], r._mapping['category']) for r in rows]
+
+    created = 0
+    for name, category in items:
+        if not name:
+            continue
+        create_group(conn, name[:200], category=category)
+        created += 1
+    return created
+
+
 # ── Name-based suggester ─────────────────────────────────────────────────────
 
 def suggest(conn):

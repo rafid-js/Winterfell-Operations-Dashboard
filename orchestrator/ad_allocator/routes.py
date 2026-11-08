@@ -131,6 +131,14 @@ def api_map_delete(map_id):
     return jsonify({'deleted': map_id})
 
 
+@aa_bp.route('/api/ad-allocator/bootstrap-groups', methods=['POST'])
+def api_bootstrap_groups():
+    mode = (request.get_json(silent=True) or {}).get('mode', 'category')
+    with get_connection() as conn:
+        created = mapping.bootstrap_from_catalog(conn, mode)
+    return jsonify({'created': created, 'mode': mode})
+
+
 @aa_bp.route('/api/ad-allocator/suggest')
 def api_suggest():
     with get_connection() as conn:

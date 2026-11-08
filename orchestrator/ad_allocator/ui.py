@@ -154,7 +154,12 @@ input[type=text],input[type=number]{background:var(--bg);border:1px solid var(--
     <label><input type="checkbox" id="g-new"> new</label>
     <label><input type="checkbox" id="g-clr"> clearance</label>
     <button class="btn" id="g-add">Add group</button>
-    <button class="btn ghost" id="suggest">Suggest from ad names</button>
+  </div>
+  <div class="formrow">
+    <span class="muted">Bootstrap from catalog:</span>
+    <button class="btn ghost" id="boot-cat">By category</button>
+    <button class="btn ghost" id="boot-prod">By product</button>
+    <button class="btn ghost" id="suggest">Suggest ad → group</button>
   </div>
   <div id="groups-list" class="muted" style="font-size:.78rem"></div>
   <div id="suggest-list" style="font-size:.78rem;margin-top:8px"></div>
@@ -314,6 +319,10 @@ $('#push').onclick=async()=>{if(!confirm('Push all APPROVED budget changes to Me
 $('#g-add').onclick=async()=>{const n=$('#g-name').value.trim();if(!n)return;
   await jpost('/api/ad-allocator/groups',{name:n,category:$('#g-cat').value,is_new:$('#g-new').checked,is_clearance:$('#g-clr').checked});
   $('#g-name').value='';loadGroups();};
+async function boot(mode){const r=await jpost('/api/ad-allocator/bootstrap-groups',{mode});
+  alert(`Created/updated ${r.created} groups (${r.mode}). Now click "Suggest ad → group" to map your ad sets.`);loadGroups();}
+$('#boot-cat').onclick=()=>boot('category');
+$('#boot-prod').onclick=()=>boot('product');
 $('#suggest').onclick=async()=>{const s=await jget('/api/ad-allocator/suggest');
   $('#suggest-list').innerHTML='<b>Suggestions</b> (click to map): '+(s.length?s.map(x=>
     `<button class="btn ghost" onclick='addMap(${x.product_group_id},"${x.adset_id}")'>${x.adset_name||x.adset_id} → ${x.group_name}</button>`).join(' '):'<span class="muted">none</span>');};
